@@ -1,0 +1,15 @@
+FastAPI
+uvicorn
+pydantic
+pydantic-settings
+email-validator
+httpx
+python-dotenv
+sqlalchemy
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.0.1
+python-multipart
+schedule
+requests
+google-generativeai

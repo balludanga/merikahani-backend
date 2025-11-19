@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: merikahani-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for hot reload
+      - .:/app
+      # Mount database file to persist data
+      - ./app.db:/app/app.db
+      - ./medium_clone.db:/app/medium_clone.db
+    environment:
+      - NEWS_API_KEY=${NEWS_API_KEY:-a692d39f74524cd2b52e114348d54274}
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - merikahani-network
+
+  # AI Content Bot Scheduler (optional - uncomment to enable)
+  # ai-bot:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: merikahani-ai-bot
+  #   volumes:
+  #     - .:/app
+  #   environment:
+  #     - NEWS_API_KEY=${NEWS_API_KEY:-a692d39f74524cd2b52e114348d54274}
+  #     - PYTHONUNBUFFERED=1
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
+  #   command: python ai_scheduler.py
+  #   networks:
+  #     - merikahani-network
+
+networks:
+  merikahani-network:
+    driver: bridge
