@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
 from app.core.config import settings
@@ -26,9 +26,14 @@ def read_root():
     return {"message": "Welcome to the Medium Clone API!"}
 
 @app.post("/api/trigger-ai-bot")
-async def trigger_ai_bot():
+async def trigger_ai_bot(request: Request):
+    # Require custom token header
+    token = request.headers.get("X-KAHANI-BACKGROUND-BOT-TOKEN")
+    if token != "e547365bae0244f3afd6b511581e99eb5a4c6246e83e464fafd784c52e832e93":
+        raise HTTPException(status_code=401, detail="Invalid bot token")
     """
     Endpoint to manually trigger AI bot content generation.
+    Requires X-KAHANI-BACKGROUND-BOT-TOKEN header for security.
     Can be called by external cron services (e.g., cron-job.org, EasyCron)
     """
     try:
