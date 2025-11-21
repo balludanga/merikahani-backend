@@ -1,5 +1,6 @@
 import os
 import requests
+import logging
 from datetime import datetime, timedelta
 import time
 from sqlalchemy.orm import Session
@@ -8,6 +9,17 @@ from app.models.post import Post
 from app.models.user import User
 import re
 import google.generativeai as genai
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # Log to console
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 # AI Bot User ID (create this user first)
 AI_BOT_USER_ID = 1  # AI Content Bot user
@@ -28,9 +40,10 @@ INDIAN_SOURCES = "the-times-of-india,the-hindu,google-news-in"
 
 def get_recent_news():
     """Fetch recent top news headlines from Indian sources, avoiding duplicates"""
+    logger.info("Starting news fetch process")
     try:
         if not NEWS_API_KEY:
-            print("⚠️  NEWS_API_KEY not found. Using fallback topics...")
+            logger.warning("NEWS_API_KEY not found. Using fallback topics...")
             return []
         
         # Rotate through different categories to get diverse news
@@ -38,7 +51,7 @@ def get_recent_news():
         import random
         selected_category = random.choice(categories)
         
-        print(f"🎯 Fetching {selected_category} news from India...")
+        logger.info(f"Fetching {selected_category} news from India...")
         
         # Try India-specific sources first
         params = {
@@ -51,15 +64,16 @@ def get_recent_news():
         
         if response.status_code == 200:
             articles = response.json().get('articles', [])
+            logger.info(f"News API returned {len(articles)} articles")
             # Filter out already used articles
             new_articles = [a for a in articles if a.get('url') not in USED_ARTICLES]
             
             if new_articles:
-                print(f"📰 Found {len(new_articles)} new Indian {selected_category} articles")
+                logger.info(f"Found {len(new_articles)} new Indian {selected_category} articles")
                 return new_articles[:5]  # Return top 5 new articles
             
             # If no country-specific news, try Indian-focused search with variety
-            print("⚠️  No country news found, searching Indian topics...")
+            logger.info("No country news found, searching Indian topics...")
             search_queries = [
                 'India politics',
                 'Indian business startup',
@@ -87,10 +101,11 @@ def get_recent_news():
                 articles = response.json().get('articles', [])
                 new_articles = [a for a in articles if a.get('url') not in USED_ARTICLES]
                 if new_articles:
+                    logger.info(f"Found {len(new_articles)} articles for query '{query}'")
                     return new_articles[:5]
             
             # Fallback to general world news
-            print("⚠️  Fetching world news...")
+            logger.info("Fetching world news as fallback...")
             topics = ['technology', 'business', 'science', 'politics', 'entertainment']
             topic = random.choice(topics)
             
@@ -105,18 +120,20 @@ def get_recent_news():
             if response.status_code == 200:
                 articles = response.json().get('articles', [])
                 new_articles = [a for a in articles if a.get('url') not in USED_ARTICLES]
+                logger.info(f"Fallback: Found {len(new_articles)} articles for topic '{topic}'")
                 return new_articles[:5]
         else:
-            print(f"News API error: {response.status_code}")
+            logger.error(f"News API error: {response.status_code} - {response.text}")
             if response.status_code == 426:
-                print("⚠️  News API requires HTTPS. Trying alternative...")
+                logger.warning("News API requires HTTPS. Trying alternative...")
             return []
     except Exception as e:
-        print(f"Error fetching news: {e}")
+        logger.error(f"Error fetching news: {str(e)}", exc_info=True)
         return []
 
 def generate_satirical_content(news_headline, news_description):
     """Generate satirical article using Gemini AI"""
+    logger.info(f"Generating satirical content for headline: {news_headline[:50]}...")
     
     prompt = f"""You are a friendly, witty Indian friend chatting over chai about current events. Write like you're gossiping with friends - natural, conversational, and funny.
 
@@ -154,6 +171,7 @@ CONTENT: [Full article written in natural, conversational style. Mix Hindi द�
 """
 
     try:
+        logger.info("Calling Gemini AI for content generation")
         model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content(
             prompt,
@@ -164,6 +182,7 @@ CONTENT: [Full article written in natural, conversational style. Mix Hindi द�
         )
         
         text = response.text
+        logger.info(f"AI generated content of length: {len(text)} characters")
         
         # Parse the response
         title_match = re.search(r'TITLE:\s*(.+?)(?:\n|$)', text)
@@ -174,6 +193,8 @@ CONTENT: [Full article written in natural, conversational style. Mix Hindi द�
         subtitle = subtitle_match.group(1).strip() if subtitle_match else ""
         content = content_match.group(1).strip() if content_match else text
         
+        logger.info(f"Parsed AI response - Title: '{title[:50]}...', Subtitle: '{subtitle[:50]}...', Content length: {len(content)}")
+        
         return {
             'title': title,
             'subtitle': subtitle,
@@ -181,7 +202,8 @@ CONTENT: [Full article written in natural, conversational style. Mix Hindi द�
         }
         
     except Exception as e:
-        print(f"Gemini API error: {e}")
+        logger.error(f"Gemini API error in generate_satirical_content: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         return None
 
 def generate_slug(title: str) -> str:
@@ -194,16 +216,20 @@ def generate_slug(title: str) -> str:
 def create_satirical_post(db: Session, article_data):
     """Create and save a satirical post to database"""
     try:
+        logger.info("Creating satirical post in database")
+        
         # Check if bot user exists
         bot_user = db.query(User).filter(User.id == AI_BOT_USER_ID).first()
         if not bot_user:
-            print(f"Bot user with ID {AI_BOT_USER_ID} not found!")
+            logger.error(f"Bot user with ID {AI_BOT_USER_ID} not found!")
             # Try querying all users to debug
             all_users = db.query(User).all()
-            print(f"Debug: Found {len(all_users)} users in database")
+            logger.info(f"Debug: Found {len(all_users)} users in database")
             for u in all_users:
-                print(f"  User {u.id}: {u.username}")
+                logger.info(f"  User {u.id}: {u.username}")
             return False
+        
+        logger.info(f"Bot user found: {bot_user.username}")
         
         # Generate unique slug
         base_slug = generate_slug(article_data['title'])
@@ -213,6 +239,8 @@ def create_satirical_post(db: Session, article_data):
         while db.query(Post).filter(Post.slug == slug).first():
             slug = f"{base_slug}-{counter}"
             counter += 1
+        
+        logger.info(f"Generated slug: {slug}")
         
         # Create post
         new_post = Post(
@@ -230,23 +258,25 @@ def create_satirical_post(db: Session, article_data):
         db.commit()
         db.refresh(new_post)
         
-        print(f"✅ Created post: {new_post.title}")
-        print(f"   Slug: {new_post.slug}")
+        logger.info(f"✅ Created post: {new_post.title}")
+        logger.info(f"   Slug: {new_post.slug}")
+        logger.info(f"   Post ID: {new_post.id}")
         return True
         
     except Exception as e:
-        print(f"Error creating post: {e}")
+        logger.error(f"Error creating satirical post: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         db.rollback()
         return False
 
 def run_ai_content_generator():
     """Main function to generate and post satirical content"""
-    print(f"\n🤖 AI Content Generator started at {datetime.now()}")
-    print("=" * 60)
+    logger.info(f"🤖 AI Content Generator started at {datetime.now()}")
+    logger.info("=" * 60)
     
     # Check if News API key is available
     if not NEWS_API_KEY:
-        print("⚠️  NEWS_API_KEY not found. Using fallback topics...")
+        logger.warning("⚠️  NEWS_API_KEY not found. Using fallback topics...")
         # Fallback: Generate content on common trending topics
         fallback_topics = [
             {
@@ -261,13 +291,17 @@ def run_ai_content_generator():
         import random
         topic = random.choice(fallback_topics)
         news_articles = fallback_topics
+        logger.info(f"Using fallback topic: {topic['title']}")
     else:
         # Fetch real news
+        logger.info("Fetching real news articles...")
         news_articles = get_recent_news()
     
     if not news_articles:
-        print("❌ No news articles found")
+        logger.error("❌ No news articles found")
         return
+    
+    logger.info(f"Found {len(news_articles)} news articles to process")
     
     # Get database session
     db = SessionLocal()
@@ -280,6 +314,9 @@ def run_ai_content_generator():
         description = article.get('description', '') or article.get('content', '')
         article_url = article.get('url', '')
         
+        logger.info(f"Selected article: {headline[:50]}...")
+        logger.info(f"Article URL: {article_url}")
+        
         # Track used article
         if article_url:
             USED_ARTICLES.add(article_url)
@@ -287,44 +324,47 @@ def run_ai_content_generator():
             if len(USED_ARTICLES) > 100:
                 USED_ARTICLES.pop()
         
-        print(f"\n📰 Processing news: {headline[:50]}...")
+        logger.info("📰 Processing news article...")
         
         # Generate satirical content
-        print("🎭 Generating satirical content with AI...")
+        logger.info("🎭 Generating satirical content with AI...")
         satirical_content = generate_satirical_content(headline, description)
         
         if satirical_content:
-            print("✍️  Content generated successfully!")
+            logger.info("✍️  Content generated successfully!")
             
             # Create post
+            logger.info("📝 Creating satirical post in database...")
             success = create_satirical_post(db, satirical_content)
             
             if success:
-                print("✅ Post published successfully!")
-                print(f"\n📝 Title: {satirical_content['title']}")
-                print(f"📌 Subtitle: {satirical_content['subtitle']}")
-                print(f"📄 Content length: {len(satirical_content['content'])} characters")
+                logger.info("✅ Post published successfully!")
+                logger.info(f"📝 Title: {satirical_content['title']}")
+                logger.info(f"📌 Subtitle: {satirical_content['subtitle']}")
+                logger.info(f"📄 Content length: {len(satirical_content['content'])} characters")
             else:
-                print("❌ Failed to publish post")
+                logger.error("❌ Failed to publish post")
         else:
-            print("❌ Failed to generate content")
+            logger.error("❌ Failed to generate content")
             
     except Exception as e:
-        print(f"❌ Error in AI content generator: {e}")
+        logger.error(f"❌ Error in AI content generator: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
     finally:
         db.close()
     
-    print("\n" + "=" * 60)
-    print(f"🤖 AI Content Generator finished at {datetime.now()}\n")
+    logger.info("=" * 60)
+    logger.info(f"🤖 AI Content Generator finished at {datetime.now()}\n")
 
 def setup_bot_user():
     """Create the AI bot user if it doesn't exist"""
+    logger.info("Setting up AI bot user...")
     db = SessionLocal()
     try:
         bot_user = db.query(User).filter(User.username == "satirical_bot").first()
         
         if not bot_user:
-            print("Creating AI bot user...")
+            logger.info("Creating AI bot user...")
             from app.core.security import get_password_hash
             
             bot_user = User(
@@ -340,16 +380,17 @@ def setup_bot_user():
             db.commit()
             db.refresh(bot_user)
             
-            print(f"✅ Bot user created with ID: {bot_user.id}")
-            print(f"   Username: {bot_user.username}")
-            print(f"   Update AI_BOT_USER_ID in this script to: {bot_user.id}")
+            logger.info(f"✅ Bot user created with ID: {bot_user.id}")
+            logger.info(f"   Username: {bot_user.username}")
+            logger.info(f"   Update AI_BOT_USER_ID in this script to: {bot_user.id}")
             return bot_user.id
         else:
-            print(f"✅ Bot user already exists with ID: {bot_user.id}")
+            logger.info(f"✅ Bot user already exists with ID: {bot_user.id}")
             return bot_user.id
             
     except Exception as e:
-        print(f"❌ Error setting up bot user: {e}")
+        logger.error(f"❌ Error setting up bot user: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
         db.rollback()
         return None
     finally:
