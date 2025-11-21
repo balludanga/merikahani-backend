@@ -25,6 +25,36 @@ app.include_router(api_router, prefix="/api")
 def read_root():
     return {"message": "Welcome to the Medium Clone API!"}
 
+@app.post("/api/trigger-ai-bot")
+async def trigger_ai_bot():
+    """
+    Endpoint to manually trigger AI bot content generation.
+    Can be called by external cron services (e.g., cron-job.org, EasyCron)
+    """
+    try:
+        import subprocess
+        import os
+        
+        # Run the AI bot script
+        result = subprocess.run(
+            ["python", "ai_content_bot.py", "test"],
+            cwd=os.path.dirname(os.path.abspath(__file__)) + "/../..",
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        return {
+            "status": "success",
+            "message": "AI bot executed",
+            "output": result.stdout[:500] if result.stdout else None
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=settings.HOST, port=settings.PORT)
