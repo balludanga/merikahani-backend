@@ -5,7 +5,7 @@ databases:
     plan: free
 
 services:
-  # Main Backend API
+  # Main Backend API with Cron Jobs for AI Bot
   - type: web
     name: merikahani-backend
     runtime: python
@@ -28,25 +28,5 @@ services:
       - key: NEWS_API_KEY
         sync: false
       - key: DESIVOCAL_API_KEY
-        sync: false
-    autoDeploy: true
-
-  # AI Content Bot (Background Worker)
-  - type: worker
-    name: merikahani-ai-bot
-    runtime: python
-    plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python ai_scheduler.py"
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.9.6
-      - key: DATABASE_URL
-        fromDatabase:
-          name: merikahani-db
-          property: connectionString
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: NEWS_API_KEY
         sync: false
     autoDeploy: true
