@@ -13,7 +13,7 @@ import google.generativeai as genai
 AI_BOT_USER_ID = 3  # Updated after creating the bot user
 
 # Gemini API Configuration
-GEMINI_API_KEY = "AIzaSyB90sr15DWHhRbtK-9bqdR4yu7dVOIWUdQ"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Set this in your environment
 genai.configure(api_key=GEMINI_API_KEY)
 
 # News API Configuration
