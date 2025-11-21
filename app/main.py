@@ -19,6 +19,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add middleware to set Cross-Origin-Opener-Policy for OAuth
+@app.middleware("http")
+async def add_coop_header(request, call_next):
+    response = await call_next(request)
+    response.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
+    return response
+
 app.include_router(api_router, prefix="/api")
 
 @app.get("/")

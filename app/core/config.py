@@ -30,6 +30,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3001",
         "https://*.vercel.app",  # All Vercel preview deployments
+        "https://vagally-matted-kristen.ngrok-free.dev"
     ]
 
     # Server
