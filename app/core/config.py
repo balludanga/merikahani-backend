@@ -1,22 +1,33 @@
 from pydantic_settings import BaseSettings
 from typing import List
+import os
 
 class Settings(BaseSettings):
     app_name: str = "My Fullstack Project"
     admin_email: str = "admin@example.com"
     items_per_page: int = 10
-    debug: bool = True
+    debug: bool = os.getenv("DEBUG", "true").lower() == "true"
     
-    # Database
-    DATABASE_URL: str = "sqlite:///./app.db"
+    # Database - defaults to SQLite for local, PostgreSQL for production
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL",
+        "sqlite:///./app.db"
+    )
     
     # Security
-    SECRET_KEY: str = "your-secret-key-here-change-in-production"
+    SECRET_KEY: str = os.getenv(
+        "SECRET_KEY",
+        "your-secret-key-here-change-in-production"
+    )
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
-    # CORS
-    ALLOW_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001"]
+    # CORS - allow both local and production domains
+    ALLOW_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://*.vercel.app",  # All Vercel preview deployments
+    ]
     
     # Server
     HOST: str = "0.0.0.0"
