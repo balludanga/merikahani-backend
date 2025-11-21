@@ -45,9 +45,11 @@ async def trigger_ai_bot():
         )
         
         return {
-            "status": "success",
+            "status": "success" if result.returncode == 0 else "error",
             "message": "AI bot executed",
-            "output": result.stdout[:500] if result.stdout else None
+            "returncode": result.returncode,
+            "stdout": result.stdout[:1000] if result.stdout else None,
+            "stderr": result.stderr[:1000] if result.stderr else None
         }
     except Exception as e:
         return {
