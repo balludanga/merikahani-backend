@@ -10,7 +10,7 @@ import re
 import google.generativeai as genai
 
 # AI Bot User ID (create this user first)
-AI_BOT_USER_ID = 1  # Update this after creating the bot user
+AI_BOT_USER_ID = 3  # Updated after creating the bot user
 
 # Gemini API Configuration
 GEMINI_API_KEY = "AIzaSyB90sr15DWHhRbtK-9bqdR4yu7dVOIWUdQ"
@@ -196,6 +196,11 @@ def create_satirical_post(db: Session, article_data):
         bot_user = db.query(User).filter(User.id == AI_BOT_USER_ID).first()
         if not bot_user:
             print(f"Bot user with ID {AI_BOT_USER_ID} not found!")
+            # Try querying all users to debug
+            all_users = db.query(User).all()
+            print(f"Debug: Found {len(all_users)} users in database")
+            for u in all_users:
+                print(f"  User {u.id}: {u.username}")
             return False
         
         # Generate unique slug
