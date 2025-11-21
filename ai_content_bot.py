@@ -69,6 +69,8 @@ def get_recent_news():
                 'Mumbai Delhi',
                 'Indian economy',
                 'India international'
+                'international relations India',
+                'environment India'
             ]
             query = random.choice(search_queries)
             
@@ -78,7 +80,7 @@ def get_recent_news():
                 'pageSize': 20,
                 'language': 'en',
                 'sortBy': 'publishedAt',
-                'domains': 'timesofindia.indiatimes.com,thehindu.com,ndtv.com,indianexpress.com,hindustantimes.com,livemint.com,business-standard.com'
+                'domains': 'timesofindia.indiatimes.com,thehindu.com,ndtv.com,indianexpress.com,hindustantimes.com,livemint.com,business-standard.com,thewire.in,thequint.com,news18.com'
             }, timeout=10)
             
             if response.status_code == 200:
@@ -123,16 +125,16 @@ Details: {news_description}
 
 WRITING STYLE - Sound like a real person talking:
 1. Write Hindi in Devanagari (हिंदी में), English in English
-2. Mix both naturally like Indians actually speak: "अरे यार, this is too much na!"
-3. Use conversational fillers: "अच्छा सुनो", "मतलब", "basically"
-4. Ask rhetorical questions: "अब बताओ?", "क्या कहें?", "seriously?"
+2. Mix both naturally like Indians actually speak
+3. Use conversational fillers
+4. Ask rhetorical questions
 5. Use everyday comparisons and examples people relate to
 6. Include real emotions - frustration, amusement, disbelief
 7. Write in short, punchy sentences like people talk
-8. Add personal observations: "मैंने तो सोचा", "देखो न"
-9. Use colloquial expressions: "बिल्कुल सही", "ऐसा ही होता है"
+8. Add personal observations
+9. Use colloquial expressions
 10. Sound like storytelling, not reporting
-11. Must mention iit jodhpur
+
 
 TONE: Friendly sarcasm, like joking with friends. Not mean, just amused and witty.
 
