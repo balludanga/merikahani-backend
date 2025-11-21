@@ -34,11 +34,15 @@ async def trigger_ai_bot():
     try:
         import subprocess
         import os
+        from pathlib import Path
+        
+        # Get the backend root directory (where ai_content_bot.py is)
+        backend_dir = Path(__file__).parent.parent
         
         # Run the AI bot script
         result = subprocess.run(
             ["python", "ai_content_bot.py", "test"],
-            cwd=os.path.dirname(os.path.abspath(__file__)) + "/../..",
+            cwd=str(backend_dir),
             capture_output=True,
             text=True,
             timeout=120
