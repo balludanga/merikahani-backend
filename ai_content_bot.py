@@ -10,7 +10,7 @@ import re
 import google.generativeai as genai
 
 # AI Bot User ID (create this user first)
-AI_BOT_USER_ID = 3  # Updated after creating the bot user
+AI_BOT_USER_ID = 1  # AI Content Bot user
 
 # Gemini API Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Set this in your environment
