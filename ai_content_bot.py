@@ -172,7 +172,7 @@ CONTENT: [Full article written in natural, conversational style. Mix Hindi à¤¦à¥
 
     try:
         logger.info("Calling Gemini AI for content generation")
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
