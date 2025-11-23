@@ -9,6 +9,10 @@ from app.models.post import Post
 from app.models.user import User
 import re
 import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -26,11 +30,16 @@ AI_BOT_USER_ID = 1  # AI Content Bot user
 
 # Gemini API Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Set this in your environment
+logger.info(f"Gemini API Key loaded: {'Yes' if GEMINI_API_KEY else 'No'}")
 genai.configure(api_key=GEMINI_API_KEY)
 
 # News API Configuration
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")  # Get free key from newsapi.org
 NEWS_API_URL = "https://newsapi.org/v2/top-headlines"
+
+# Alternative News API (NewsData.io) - more reliable
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY", "")  # Get from newsdata.io
+NEWSDATA_URL = "https://newsdata.io/api/1/news"
 
 # Track used articles to avoid duplicates
 USED_ARTICLES = set()
@@ -38,9 +47,67 @@ USED_ARTICLES = set()
 # Indian News Sources - prioritize Indian media
 INDIAN_SOURCES = "the-times-of-india,the-hindu,google-news-in"
 
+def get_recent_news_newsdata():
+    """Fetch recent news using NewsData.io API (more reliable alternative)"""
+    logger.info("Fetching news using NewsData.io API")
+    try:
+        if not NEWSDATA_API_KEY:
+            logger.warning("NEWSDATA_API_KEY not found")
+            return []
+
+        # NewsData.io parameters for Indian news
+        params = {
+            'apikey': NEWSDATA_API_KEY,
+            'country': 'in',  # India
+            'language': 'en,hi',  # English and Hindi
+            'size': 10,  # Get 10 articles
+            'category': 'top'  # Top news
+        }
+
+        response = requests.get(NEWSDATA_URL, params=params, timeout=15)
+
+        if response.status_code == 200:
+            data = response.json()
+            articles = data.get('results', [])
+
+            # Convert NewsData.io format to match our expected format
+            formatted_articles = []
+            for article in articles:
+                if article.get('link') and article.get('link') not in USED_ARTICLES:
+                    formatted_article = {
+                        'title': article.get('title', ''),
+                        'description': article.get('description', '') or article.get('content', ''),
+                        'url': article.get('link', ''),
+                        'source': {'name': article.get('source_id', 'newsdata')},
+                        'publishedAt': article.get('pubDate', '')
+                    }
+                    formatted_articles.append(formatted_article)
+
+            if formatted_articles:
+                logger.info(f"Found {len(formatted_articles)} articles from NewsData.io")
+                return formatted_articles[:5]
+
+        else:
+            logger.error(f"NewsData.io API error: {response.status_code} - {response.text}")
+
+    except Exception as e:
+        logger.error(f"Error fetching from NewsData.io: {str(e)}")
+
+    return []
+
 def get_recent_news():
     """Fetch recent top news headlines from Indian sources, avoiding duplicates"""
     logger.info("Starting news fetch process")
+
+    # Try NewsData.io first (more reliable)
+    if NEWSDATA_API_KEY:
+        logger.info("Trying NewsData.io API first...")
+        articles = get_recent_news_newsdata()
+        if articles:
+            return articles
+        logger.warning("NewsData.io failed, falling back to NewsAPI...")
+
+    # Fallback to NewsAPI.org
     try:
         if not NEWS_API_KEY:
             logger.warning("NEWS_API_KEY not found. Using fallback topics...")
@@ -151,6 +218,8 @@ WRITING STYLE - Sound like a real person talking:
 8. Add personal observations
 9. Use colloquial expressions
 10. Sound like storytelling, not reporting
+11. dont write like -- "अरे भाई, अभी-अभी मैंने यह news पढ़ी और मेरी तो हंसी नहीं रुक रही! मतलब seriously, कभी-कभी लगता है कि हम एक comedy show में रहते हैं, जहाँ हर दिन एक नया एपिसोड आता है।", "सुनो ना, यार! अभी-अभी मैंने एक न्यूज़ पढ़ी और मेरा तो दिमाग ही घूम गया। मतलब, कभी-कभी मुझे लगता है कि हम एक ऐसे *parallel universe* में रहते हैं जहाँ सब कुछ उल्टा चलता है", "मेरा तो दिमाग ही घूमने लगा", "अच्छा सुनो, एक बात बताऊँ?" it looks very forced and unnatural
+12. dont use -- अरे भाई, अरे यार, यार etc it is overused and sounds unnatural 
 
 
 TONE: Friendly sarcasm, like joking with friends. Not mean, just amused and witty.
@@ -162,17 +231,23 @@ STRUCTURE:
 
 Length: 400-600 words with natural paragraph breaks
 
-Example tone: "अरे भाई, अभी-अभी मैंने यह news पढ़ी और हंसी नहीं रुकी। मतलब seriously, कभी-कभी लगता है कि हम comedy show में रहते हैं! 😂"
+IMPORTANT: 
+- Title and subtitle should NOT appear anywhere in the CONTENT section
+- CONTENT should start directly with the article text
+- Do not repeat the title or subtitle in the body
+- Write the full article content naturally without any headers
+- Avoid phrases like "अरे भाई", "अरे यार", "यार" as they sound forced
+- Keep it natural and conversational like real friends chatting
 
 Format the response as:
 TITLE: [Catchy, conversational title mixing Hindi and English like people actually talk]
 SUBTITLE: [A one-liner that sounds like something your friend would say]
-CONTENT: [Full article written in natural, conversational style. Mix Hindi देवनागरी and English like real people speak. Use short paragraphs. Sound human, not robotic!]
+CONTENT: [Full article written in natural, conversational style. Mix Hindi देवनागरी and English like real people speak. Use short paragraphs. Sound human, not robotic! Do NOT include the title or subtitle in this section.]
 """
 
     try:
         logger.info("Calling Gemini AI for content generation")
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
@@ -192,6 +267,20 @@ CONTENT: [Full article written in natural, conversational style. Mix Hindi द�
         title = title_match.group(1).strip() if title_match else news_headline
         subtitle = subtitle_match.group(1).strip() if subtitle_match else ""
         content = content_match.group(1).strip() if content_match else text
+        
+        # Clean up content - remove any embedded title/subtitle text
+        if content:
+            # Remove any TITLE: or SUBTITLE: sections that might be in the content
+            content = re.sub(r'TITLE:\s*.+?(?:\n|$)', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'SUBTITLE:\s*.+?(?:\n|$)', '', content, flags=re.IGNORECASE)
+            # Remove any duplicate title/subtitle text that might appear in content
+            if title and title in content:
+                content = content.replace(title, '', 1)  # Remove first occurrence only
+            if subtitle and subtitle in content:
+                content = content.replace(subtitle, '', 1)  # Remove first occurrence only
+            # Clean up extra whitespace
+            content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)  # Remove excessive newlines
+            content = content.strip()
         
         logger.info(f"Parsed AI response - Title: '{title[:50]}...', Subtitle: '{subtitle[:50]}...', Content length: {len(content)}")
         
@@ -296,6 +385,30 @@ def run_ai_content_generator():
         # Fetch real news
         logger.info("Fetching real news articles...")
         news_articles = get_recent_news()
+        
+        # If news fetch failed, use fallback topics
+        if not news_articles:
+            logger.warning("⚠️  News API failed, using fallback topics...")
+            fallback_topics = [
+                {
+                    'title': 'Political Rally Promises Free Everything Except Common Sense',
+                    'description': 'Another election season, another set of impossible promises'
+                },
+                {
+                    'title': 'Social Media Outrage Reaches New Heights Over Absolutely Nothing',
+                    'description': 'Twitter trends show collective anger about trivial matters'
+                },
+                {
+                    'title': 'Traffic Jam in Mumbai Reaches Philosophical Levels',
+                    'description': 'Commuters achieve enlightenment while stuck in eternal gridlock'
+                },
+                {
+                    'title': 'Celebrity Announces New Diet: Eating Less Food',
+                    'description': 'Revolutionary weight loss method shocks nutrition experts worldwide'
+                }
+            ]
+            news_articles = fallback_topics
+            logger.info("Using fallback topics for content generation")
     
     if not news_articles:
         logger.error("❌ No news articles found")
