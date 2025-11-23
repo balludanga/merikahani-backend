@@ -99,7 +99,7 @@ def get_recent_news():
     """Fetch recent top news headlines from Indian sources, avoiding duplicates"""
     logger.info("Starting news fetch process")
 
-    # Try NewsData.io first (more reliable)
+    # Try NewsData.io first (more reliable, better rate limits)
     if NEWSDATA_API_KEY:
         logger.info("Trying NewsData.io API first...")
         articles = get_recent_news_newsdata()
@@ -107,96 +107,90 @@ def get_recent_news():
             return articles
         logger.warning("NewsData.io failed, falling back to NewsAPI...")
 
-    # Fallback to NewsAPI.org
+    # Fallback to NewsAPI.org with rate limiting protection
     try:
         if not NEWS_API_KEY:
             logger.warning("NEWS_API_KEY not found. Using fallback topics...")
             return []
-        
-        # Rotate through different categories to get diverse news
-        categories = ['general', 'business', 'technology', 'sports', 'entertainment', 'science', 'health']
-        import random
-        selected_category = random.choice(categories)
-        
+
+        # Single attempt with rate limiting protection
+        selected_category = 'general'  # Use general instead of random to reduce API calls
+
         logger.info(f"Fetching {selected_category} news from India...")
-        
-        # Try India-specific sources first
+
         params = {
             'apiKey': NEWS_API_KEY,
             'country': 'in',
             'category': selected_category,
-            'pageSize': 20  # Get more articles to filter
+            'pageSize': 10  # Reduced from 20 to be more conservative
         }
+
         response = requests.get(NEWS_API_URL, params=params, timeout=10)
-        
+
         if response.status_code == 200:
             articles = response.json().get('articles', [])
             logger.info(f"News API returned {len(articles)} articles")
             # Filter out already used articles
             new_articles = [a for a in articles if a.get('url') not in USED_ARTICLES]
-            
+
             if new_articles:
-                logger.info(f"Found {len(new_articles)} new Indian {selected_category} articles")
-                return new_articles[:5]  # Return top 5 new articles
-            
-            # If no country-specific news, try Indian-focused search with variety
-            logger.info("No country news found, searching Indian topics...")
-            search_queries = [
-                'India politics',
-                'Indian business startup',
-                'Bollywood entertainment',
-                'cricket India',
-                'Indian technology',
-                'Mumbai Delhi',
-                'Indian economy',
-                'India international'
-                'international relations India',
-                'environment India'
-            ]
-            query = random.choice(search_queries)
-            
-            response = requests.get('https://newsapi.org/v2/everything', params={
-                'apiKey': NEWS_API_KEY,
-                'q': query,
-                'pageSize': 20,
-                'language': 'en',
-                'sortBy': 'publishedAt',
-                'domains': 'timesofindia.indiatimes.com,thehindu.com,ndtv.com,indianexpress.com,hindustantimes.com,livemint.com,business-standard.com,thewire.in,thequint.com,news18.com'
-            }, timeout=10)
-            
+                logger.info(f"Found {len(new_articles)} new Indian articles")
+                return new_articles[:5]
+
+        elif response.status_code == 429:
+            logger.warning("NewsAPI rate limit exceeded. Waiting before retry...")
+            time.sleep(60)  # Wait 1 minute for rate limit reset
+
+            # Retry once after waiting
+            response = requests.get(NEWS_API_URL, params=params, timeout=10)
             if response.status_code == 200:
                 articles = response.json().get('articles', [])
                 new_articles = [a for a in articles if a.get('url') not in USED_ARTICLES]
                 if new_articles:
-                    logger.info(f"Found {len(new_articles)} articles for query '{query}'")
+                    logger.info(f"After rate limit reset: Found {len(new_articles)} articles")
                     return new_articles[:5]
-            
-            # Fallback to general world news
-            logger.info("Fetching world news as fallback...")
-            topics = ['technology', 'business', 'science', 'politics', 'entertainment']
-            topic = random.choice(topics)
-            
-            response = requests.get('https://newsapi.org/v2/everything', params={
-                'apiKey': NEWS_API_KEY,
-                'q': topic,
-                'pageSize': 20,
-                'language': 'en',
-                'sortBy': 'publishedAt'
-            }, timeout=10)
-            
-            if response.status_code == 200:
-                articles = response.json().get('articles', [])
-                new_articles = [a for a in articles if a.get('url') not in USED_ARTICLES]
-                logger.info(f"Fallback: Found {len(new_articles)} articles for topic '{topic}'")
-                return new_articles[:5]
+
+            logger.error("Still rate limited after waiting")
+
         else:
-            logger.error(f"News API error: {response.status_code} - {response.text}")
-            if response.status_code == 426:
-                logger.warning("News API requires HTTPS. Trying alternative...")
-            return []
+            logger.error(f"News API error: {response.status_code} - {response.text[:100]}...")
+
     except Exception as e:
-        logger.error(f"Error fetching news: {str(e)}", exc_info=True)
-        return []
+        logger.error(f"Error fetching news: {str(e)}")
+
+    # Final fallback - hardcoded topics (guaranteed to work)
+    logger.warning("All APIs failed, using hardcoded fallback topics...")
+    fallback_topics = [
+        {
+            'title': 'Political Rally Promises Free Everything Except Common Sense',
+            'description': 'Another election season, another set of impossible promises'
+        },
+        {
+            'title': 'Social Media Outrage Reaches New Heights Over Absolutely Nothing',
+            'description': 'Twitter trends show collective anger about trivial matters'
+        },
+        {
+            'title': 'Traffic Jam in Mumbai Reaches Philosophical Levels',
+            'description': 'Commuters achieve enlightenment while stuck in eternal gridlock'
+        },
+        {
+            'title': 'Celebrity Announces New Diet: Eating Less Food',
+            'description': 'Revolutionary weight loss method shocks nutrition experts worldwide'
+        }
+    ]
+
+    # Return fallback topics in article format
+    formatted_fallbacks = []
+    for topic in fallback_topics:
+        formatted_fallbacks.append({
+            'title': topic['title'],
+            'description': topic['description'],
+            'url': f'fallback-{hash(topic["title"])}',  # Unique URL for tracking
+            'source': {'name': 'Fallback Content'}
+        })
+
+    logger.info(f"Using {len(formatted_fallbacks)} fallback topics")
+    return formatted_fallbacks[:5]
 
 def generate_satirical_content(news_headline, news_description):
     """Generate satirical article using Gemini AI"""
