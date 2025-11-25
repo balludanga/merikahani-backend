@@ -11,7 +11,7 @@ router = APIRouter()
 def generate_sitemap(db: Session = Depends(get_db)):
     """Generate XML sitemap for SEO"""
     
-    base_url = "https://merikahani.com"
+    base_url = "https://kahanighargharki.vercel.app"
     
     # Start XML
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -54,7 +54,7 @@ def generate_sitemap(db: Session = Depends(get_db)):
 def generate_rss(db: Session = Depends(get_db)):
     """Generate RSS feed for blog posts"""
     
-    base_url = "https://merikahani.com"
+    base_url = "https://kahanighargharki.vercel.app"
     
     # Start RSS
     rss = '<?xml version="1.0" encoding="UTF-8"?>\n'
