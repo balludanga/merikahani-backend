@@ -1,15 +1,13 @@
-
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 import requests
 import os
 import logging
-from app.schemas.user import Token
+from app.schemas.user import Token, UserResponse
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin, UserResponse
-from app.core.security import verify_password, get_password_hash, create_access_token
+from app.core.security import get_password_hash, create_access_token
 from app.core.config import settings
 from app.core.dependencies import get_current_user
 
@@ -73,66 +71,6 @@ async def google_login(request: Request, db: Session = Depends(get_db)):
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
     logger.info(f"Google login successful for user {email}, token expires in {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user
-    }
-
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    logger.info(f"Registration attempt for email: {user_data.email}, username: {user_data.username}")
-    try:
-        # Check if user already exists
-        db_user = db.query(User).filter(User.email == user_data.email).first()
-        if db_user:
-            logger.warning(f"Registration failed: Email {user_data.email} already registered")
-            raise HTTPException(status_code=400, detail="Email already registered")
-        
-        db_user = db.query(User).filter(User.username == user_data.username).first()
-        if db_user:
-            logger.warning(f"Registration failed: Username {user_data.username} already taken")
-            raise HTTPException(status_code=400, detail="Username already taken")
-        
-        # Create new user
-        hashed_password = get_password_hash(user_data.password)
-        from datetime import datetime
-        db_user = User(
-            email=user_data.email,
-            username=user_data.username,
-            full_name=user_data.full_name,
-            hashed_password=hashed_password,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
-        db.add(db_user)
-        db.commit()
-        db.refresh(db_user)
-        logger.info(f"User registered successfully: id={db_user.id}, email={user_data.email}")
-        return db_user
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Registration error for {user_data.email}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@router.post("/login", response_model=Token)
-def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
-    logger.info(f"Login attempt for email: {user_credentials.email}")
-    user = db.query(User).filter(User.email == user_credentials.email).first()
-    if not user or not verify_password(user_credentials.password, user.hashed_password):
-        logger.warning(f"Login failed for {user_credentials.email}: user exists={user is not None}, password valid={user is not None and verify_password(user_credentials.password, user.hashed_password)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": str(user.id)}, expires_delta=access_token_expires
-    )
-    logger.info(f"Login successful for user {user_credentials.email}, token expires in {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
     return {
         "access_token": access_token,
         "token_type": "bearer",
