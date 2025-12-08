@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # Database - defaults to SQLite for local, PostgreSQL for production
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "sqlite:///./app.db"
+        f"sqlite:///{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'app.db'))}"
     )
 
     # Security
