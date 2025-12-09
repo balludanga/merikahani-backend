@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     class Config:
-        env_file = ".env"
+        # Ensure we load the backend/.env file regardless of current working directory.
+        env_file = str(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
         extra = "ignore"  # Ignore extra fields from .env file
 
 settings = Settings()
