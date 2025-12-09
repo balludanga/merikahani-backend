@@ -18,7 +18,16 @@ router = APIRouter()
 @router.post("/google-login", response_model=Token)
 async def google_login(request: Request, db: Session = Depends(get_db)):
     logger.info("Google login attempt initiated")
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse JSON body for google-login: {e}")
+        raise HTTPException(status_code=400, detail="Invalid or missing JSON body")
+
+    if not isinstance(data, dict):
+        logger.warning("Google login failed: JSON body is not an object")
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
     token = data.get("token")
     if not token:
         logger.warning("Google login failed: Missing token in request")

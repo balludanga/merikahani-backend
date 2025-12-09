@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 from app.api import api_router
 from app.core.config import settings
 from app.database import engine, Base
@@ -20,12 +22,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add middleware to set Cross-Origin-Opener-Policy for OAuth
-@app.middleware("http")
-async def add_coop_header(request, call_next):
-    response = await call_next(request)
-    response.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
-    return response
+
+class CoopHeaderMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app: ASGIApp):
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        try:
+            response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+        except Exception:
+            pass
+        return response
+
+
+class PrivateNetworkMiddleware(BaseHTTPMiddleware):
+    """Add `Access-Control-Allow-Private-Network: true` to responses when the
+    browser requested a private-network preflight via
+    `Access-Control-Request-Private-Network: true`.
+    """
+    def __init__(self, app: ASGIApp):
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        try:
+            if request.headers.get("access-control-request-private-network"):
+                response.headers["Access-Control-Allow-Private-Network"] = "true"
+        except Exception:
+            pass
+        return response
+
+# Register ASGI middlewares so they run outside/around CORSMiddleware responses
+app.add_middleware(CoopHeaderMiddleware)
+app.add_middleware(PrivateNetworkMiddleware)
 
 app.include_router(api_router, prefix="/api")
 
