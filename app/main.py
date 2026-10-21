@@ -22,6 +22,8 @@ def _ensure_post_columns():
         statements.append("ALTER TABLE posts ADD COLUMN topic VARCHAR")
     if "clap_count" not in columns:
         statements.append("ALTER TABLE posts ADD COLUMN clap_count INTEGER DEFAULT 0")
+    if "content_html" not in columns:
+        statements.append("ALTER TABLE posts ADD COLUMN content_html TEXT")
     if statements:
         with engine.begin() as conn:
             for stmt in statements:

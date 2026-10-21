@@ -1,4 +1,4 @@
-"""Medium-style read gate: signed-out visitors get a teaser, members read everything."""
+"""Publication-style read gate: signed-out visitors get a teaser, members read everything."""
 
 from typing import List, Optional, Union
 
@@ -38,6 +38,8 @@ def apply_read_gate(posts: Union[Post, List[Post]], user: Optional[User]) -> Non
         content = post.content or ""
         if user is None and len(content) > PREVIEW_LIMIT:
             post.content = preview_text(content)
+            # Never leak the full body through the rich-text rendering.
+            post.content_html = None
             post.is_preview = True
         else:
             post.is_preview = False

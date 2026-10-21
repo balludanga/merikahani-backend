@@ -10,6 +10,7 @@ class Post(Base):
     title = Column(String, nullable=False, index=True)
     subtitle = Column(String, nullable=True)
     content = Column(Text, nullable=False)
+    content_html = Column(Text, nullable=True)  # sanitized rich-text rendering
     slug = Column(String, unique=True, index=True, nullable=False)
     cover_image = Column(String, nullable=True)
     topic = Column(String, nullable=True, index=True)

@@ -7,6 +7,7 @@ class PostBase(BaseModel):
     title: str
     subtitle: Optional[str] = None
     content: str
+    content_html: Optional[str] = None
     cover_image: Optional[str] = None
     topic: Optional[str] = None
     published: int = 0
@@ -18,6 +19,7 @@ class PostUpdate(BaseModel):
     title: Optional[str] = None
     subtitle: Optional[str] = None
     content: Optional[str] = None
+    content_html: Optional[str] = None
     cover_image: Optional[str] = None
     topic: Optional[str] = None
     published: Optional[int] = None
