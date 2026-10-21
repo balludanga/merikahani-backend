@@ -1,4 +1,0 @@
-- Endpoints declare their own `router = APIRouter()` and attach route decorators directly, keeping each endpoint file self-contained.
-- Database sessions are injected via `Depends(get_db)` and queries use the legacy `db.query(Model).filter(...).first()` pattern rather than `session.execute(select(...))`.
-- Error responses raise FastAPI `HTTPException` with explicit `status_code` and Hindi-language `detail` strings for user-facing messages.
-- Request bodies and responses are typed through Pydantic schemas imported from `app.schemas.user` (`UserCreate`, `UserLogin`, `UserResponse`, `Token`, `UserProfileResponse`) instead of raw dicts.

@@ -1,1 +1,0 @@
-Implements user follow/unfollow relationships and post clap reactions via FastAPI endpoints backed by SQLAlchemy models with unique constraints.

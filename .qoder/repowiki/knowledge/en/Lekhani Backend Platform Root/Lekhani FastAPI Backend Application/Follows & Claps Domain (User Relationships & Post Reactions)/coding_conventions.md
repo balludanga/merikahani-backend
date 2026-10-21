@@ -1,4 +1,0 @@
-- Database sessions are injected into route handlers via `Depends(get_db)` from `app.database`.
-- Authenticated requests obtain the current user through `Depends(get_current_user)` returning a `User` instance.
-- Models declare a `UniqueConstraint` in `__table_args__` to prevent duplicate relationship rows (e.g., same follower-following pair or same user-post clap).
-- Target-user existence is validated centrally via a private `_get_target_user(db, user_id)` helper that raises `HTTPException(404)` before any follow operation proceeds.

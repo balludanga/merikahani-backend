@@ -1,1 +1,0 @@
-FastAPI + Starlette middleware, SQLAlchemy ORM with Alembic-style manual ALTER TABLE migrations, Pydantic schemas, uvicorn server, Google OAuth2 via authlib.

@@ -1,1 +1,0 @@
-pytest with FastAPI's `TestClient` for in-process HTTP integration testing; `unittest.mock.patch` used to mock Google OAuth userinfo calls and settings.

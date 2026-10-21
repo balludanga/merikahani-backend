@@ -1,1 +1,0 @@
-FastAPI routers and SQLAlchemy models for managing post comments and tag-based post discovery, including popular-tag ranking and per-user clap/bookmark enrichment.

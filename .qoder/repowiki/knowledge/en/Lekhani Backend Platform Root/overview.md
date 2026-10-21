@@ -1,1 +1,0 @@
-Root of the Lekhani FastAPI backend, wiring the app and tests packages under a shared Python runtime with Docker/Render deployment descriptors.

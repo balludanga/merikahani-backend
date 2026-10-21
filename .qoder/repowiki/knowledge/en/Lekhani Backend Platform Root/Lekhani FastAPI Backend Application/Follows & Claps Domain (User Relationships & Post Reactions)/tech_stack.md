@@ -1,1 +1,0 @@
-FastAPI `APIRouter` for HTTP routing; SQLAlchemy Core + ORM with declarative Base, foreign keys to `users.id` / `posts.id`, and `UniqueConstraint`-enforced composite keys.

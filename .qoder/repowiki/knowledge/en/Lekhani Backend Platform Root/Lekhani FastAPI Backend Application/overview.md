@@ -1,1 +1,0 @@
-FastAPI application that wires domain routers (users/auth, posts/bookmarks, comments/tags, follows/claps) to shared database, config, security, and dependency infrastructure.

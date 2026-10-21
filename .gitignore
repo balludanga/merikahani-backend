@@ -60,3 +60,4 @@ htmlcov/
 
 # Docker
 .dockerignore
+.qoder/
