@@ -14,6 +14,7 @@ from app.models.tag import Tag, post_tags
 from app.schemas.post import PostCreate, PostUpdate, PostResponse, ClapResponse
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.content import apply_read_gate
+from app.core.sanitize import clean_html
 
 router = APIRouter()
 
@@ -200,6 +201,7 @@ def create_post(
         title=post_data.title,
         subtitle=post_data.subtitle,
         content=post_data.content,
+        content_html=clean_html(post_data.content_html),
         slug=slug,
         cover_image=post_data.cover_image,
         topic=post_data.topic,
@@ -239,6 +241,8 @@ def update_post(
         update_data["slug"] = slug
 
     new_tags = update_data.pop("tags", None)
+    if "content_html" in update_data:
+        update_data["content_html"] = clean_html(update_data["content_html"])
     for field, value in update_data.items():
         setattr(post, field, value)
 

@@ -1,9 +1,7 @@
-databases:
-  - name: lekhanii-db
-    databaseName: lekhani
-    user: lekhani
-    plan: free
-
+# No Render-managed database: the free Postgres expired by design (30 days).
+# Production DATABASE_URL is the Supabase session-pooler string, set manually
+# in the Render dashboard — `sync: false` keeps blueprint updates from
+# recreating an empty Render DB and silently overwriting it.
 services:
   # Lekhani API — हिंदी लेखकों का अपना मंच
   - type: web
@@ -16,15 +14,19 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: DATABASE_URL
-        fromDatabase:
-          name: lekhanii-db
-          property: connectionString
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG
         value: false
       - key: GOOGLE_CLIENT_ID
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: UPLOAD_BUCKET
+        value: lekhani-media
       - key: FRONTEND_URL
         value: https://lekhanii.vercel.app
     autoDeploy: true
