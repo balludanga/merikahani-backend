@@ -1,0 +1,4 @@
+- Each feature area gets its own `test_<feature>.py` file under `tests/`, keeping endpoint groups isolated by concern.
+- Shared test state (the `TestClient` instance and pre-registered writers) lives in `conftest.py` as `scope="module"` fixtures rather than being recreated per test.
+- External service calls (Google OAuth userinfo) are neutralized via `unittest.mock.patch` around the specific import path instead of replacing the whole endpoint.
+- Usernames and email addresses are randomized per run using `uuid.uuid4().hex[:8]` to avoid collisions when multiple tests hit the same in-memory store.

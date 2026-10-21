@@ -1,0 +1,1 @@
+FastAPI + SQLAlchemy ORM with manual session handling; uses raw `db.query(...).filter(...)` queries instead of declarative query builders.

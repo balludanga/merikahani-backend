@@ -27,3 +27,10 @@ class Token(BaseModel):
     token_type: str
     user: UserResponse
 
+class UserProfileResponse(UserResponse):
+    follower_count: int = 0
+    following_count: int = 0
+    post_count: int = 0
+    is_following: bool = False
+
+

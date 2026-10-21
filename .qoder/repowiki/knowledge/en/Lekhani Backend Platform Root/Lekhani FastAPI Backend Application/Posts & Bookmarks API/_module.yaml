@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: app/posts_and_bookmarks
+title: Posts & Bookmarks API
+scope:
+    - app/api/endpoints/posts.py
+    - app/api/endpoints/bookmarks.py
+    - app/models/post.py
+    - app/models/bookmark.py
+source_files: []
+depends_on: []
+related_to:
+    - path: app/follows
+    - path: tests

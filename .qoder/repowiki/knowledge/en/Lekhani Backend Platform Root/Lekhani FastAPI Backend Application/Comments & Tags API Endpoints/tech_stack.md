@@ -1,0 +1,1 @@
+FastAPI + SQLAlchemy ORM; uses `sqlalchemy.func.count` and `group_by` to rank tags by published-post count.

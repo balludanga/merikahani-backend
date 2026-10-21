@@ -1,0 +1,4 @@
+- Configuration values are accessed exclusively through the singleton `settings` from `app.core.config`, never via direct `os.getenv` calls in callers.
+- Database sessions are provided to route handlers through the `get_db()` generator injected via `Depends(get_db)` rather than manual session management.
+- Authentication dependencies expose both a required (`get_current_user`) and an optional (`get_current_user_optional`) variant of the same token-decode-and-user-lookup flow.
+- Custom request/response behavior is implemented as Starlette `BaseHTTPMiddleware` subclasses registered with `app.add_middleware`, keeping cross-cutting concerns outside route handlers.

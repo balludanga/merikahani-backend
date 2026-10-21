@@ -12,6 +12,8 @@ class Post(Base):
     content = Column(Text, nullable=False)
     slug = Column(String, unique=True, index=True, nullable=False)
     cover_image = Column(String, nullable=True)
+    topic = Column(String, nullable=True, index=True)
+    clap_count = Column(Integer, default=0, nullable=False)
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     published = Column(Integer, default=0)  # 0 = draft, 1 = published
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -19,4 +21,11 @@ class Post(Base):
 
     author = relationship("User", back_populates="posts")
     comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
+    claps = relationship("Clap", back_populates="post", cascade="all, delete-orphan")
+    bookmarks = relationship("Bookmark", back_populates="post", cascade="all, delete-orphan")
+    tags = relationship("Tag", secondary="post_tags", back_populates="posts", lazy="selectin")
+
+    @property
+    def tag_names(self):
+        return [tag.name for tag in (self.tags or [])]
 

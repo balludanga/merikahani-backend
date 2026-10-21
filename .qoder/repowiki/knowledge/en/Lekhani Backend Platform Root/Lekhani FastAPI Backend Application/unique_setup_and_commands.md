@@ -1,0 +1,1 @@
+Run locally with `uvicorn app.main:app` or `python -m app.main`; on startup the app auto-creates tables and runs an inline ALTER TABLE to add missing columns to posts.

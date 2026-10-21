@@ -3,7 +3,7 @@ from typing import List
 import os
 
 class Settings(BaseSettings):
-    app_name: str = "My Fullstack Project"
+    app_name: str = "Lekhani"
     admin_email: str = "admin@example.com"
     items_per_page: int = 10
     debug: bool = os.getenv("DEBUG", "true").lower() == "true"
@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "YOUR_GOOGLE_CLIENT_ID")
+
+    # Public frontend URL (used for sitemap / RSS links)
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")
 
     # CORS - allow both local and production domains
     ALLOW_ORIGINS: List[str] = [

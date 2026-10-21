@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: ""
+title: Lekhani Backend Platform Root
+scope:
+    - README.md
+    - README.Docker.md
+    - requirements.txt
+    - .gitignore
+    - Dockerfile
+    - docker-compose.yml
+    - render.yaml
+    - .env.example
+source_files: []
+depends_on: []
+related_to: []

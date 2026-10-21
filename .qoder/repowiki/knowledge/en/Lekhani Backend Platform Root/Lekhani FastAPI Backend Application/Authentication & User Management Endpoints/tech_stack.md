@@ -1,0 +1,1 @@
+FastAPI `APIRouter` handlers with SQLAlchemy ORM sessions; Google OAuth2 id_token verification via the Google Token Info REST API; JWT access tokens created through `app.core.security.create_access_token` with configurable expiry from `settings.ACCESS_TOKEN_EXPIRE_MINUTES`.

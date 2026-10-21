@@ -1,0 +1,8 @@
+The module is organized into two layers:
+- Application entrypoint (`app/main.py`): creates the `FastAPI` instance, runs startup migrations (creates tables via `Base.metadata.create_all`, then adds missing `posts.topic` / `clap_count` columns through raw SQL), registers CORS plus two custom ASGI middlewares (`CoopHeaderMiddleware` for COOP headers, `PrivateNetworkMiddleware` for private-network preflight), includes `api_router` under `/api`, and exposes a root endpoint.
+- Shared core (`app/core/`) + DB layer (`app/database.py`):
+  - `config.Settings` (pydantic-settings `BaseSettings`) centralizes all env-driven configuration with defaults and an explicit `.env` path relative to `core/config.py`.
+  - `database.py` builds a SQLAlchemy `engine` (SQLite vs. other dialects via `check_same_thread`, `pool_pre_ping`, `pool_recycle=300`) and exposes a `get_db()` generator dependency.
+  - `security.py` wraps `passlib` bcrypt hashing and `python-jose` JWT encode/decode using `settings.SECRET_KEY` and `HS256`.
+  - `dependencies.py` wires FastAPI `Depends` for auth: `OAuth2PasswordBearer` schemes, `get_current_user` (decodes token → looks up `User` by `sub`), and an optional variant `get_current_user_optional`.
+Dependency direction is one-way: `main` → `core` + `database`; `core/security` → `core/config`; `core/dependencies` → `database` + `core/security` + `app.models.user`. The module itself has no business logic — it is consumed by `app.api.*` routers.
