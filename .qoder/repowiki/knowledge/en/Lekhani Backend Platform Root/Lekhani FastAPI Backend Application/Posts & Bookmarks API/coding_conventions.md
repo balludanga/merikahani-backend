@@ -1,4 +1,0 @@
-- Endpoints declare `db: Session = Depends(get_db)` and an optional or required `current_user` dependency, then raise `HTTPException(status_code=404, detail="Post not found")` when a resource lookup fails.
-- Mutating endpoints that change ownership check `post.author_id != current_user.id` and respond with 403 "Not authorized" before committing changes.
-- List endpoints attach per-viewer metadata by mutating attributes like `post.my_claps` and `post.bookmarked` on the returned ORM objects rather than using Pydantic response models for those fields.
-- Tag inputs are normalized through a shared helper that strips whitespace, enforces length bounds, deduplicates case-insensitively, and caps entries at `MAX_TAGS_PER_POST`.

@@ -1,1 +1,0 @@
-Python 3.11 (slim image) with FastAPI + Uvicorn, SQLAlchemy + psycopg2-binary for PostgreSQL, Pydantic v2 with pydantic-settings for config, python-jose for JWT auth, bcrypt for password hashing; deployed to Render as a Python web service with auto-deploy and a provisioned PostgreSQL instance.

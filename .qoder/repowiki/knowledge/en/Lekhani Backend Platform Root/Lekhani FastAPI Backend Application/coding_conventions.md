@@ -1,4 +1,0 @@
-- Each domain feature lives as its own FastAPI Router mounted under /api/<feature> in app/api/endpoints/.
-- Database access is centralized through the shared SQLAlchemy engine and Base metadata defined in app/database.py rather than per-router connections.
-- Configuration flows through the singleton settings object in app/core/config.py instead of environment reads inside routers.
-- Request/response payloads are typed with Pydantic models in app/schemas/ rather than raw dicts in endpoint handlers.

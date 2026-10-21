@@ -1,1 +1,0 @@
-Pytest-based integration tests that exercise the FastAPI application endpoints (root, auth, posts, features) using an in-process TestClient.

@@ -1,1 +1,0 @@
-`docker compose up` builds the image from `Dockerfile`, runs the backend on port 8000 with hot reload, and persists SQLite data in `./app.db`; locally, copy `.env.example` to `.env` and set `DATABASE_URL=sqlite:///./app.db` (or a PostgreSQL URL). On Render, `buildCommand` installs requirements and `startCommand` launches uvicorn against `$PORT`.

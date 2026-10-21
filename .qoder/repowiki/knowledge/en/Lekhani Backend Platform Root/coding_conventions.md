@@ -1,2 +1,0 @@
-- Application configuration is loaded via pydantic-settings from environment variables matching the keys in `.env.example`.
-- The ASGI application entry point is consistently referenced as `app.main:app` across Docker, docker-compose, and Render configurations.

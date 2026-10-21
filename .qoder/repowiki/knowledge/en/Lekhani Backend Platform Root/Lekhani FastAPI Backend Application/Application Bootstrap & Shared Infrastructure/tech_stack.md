@@ -1,1 +1,0 @@
-FastAPI + Starlette ASGI middleware; SQLAlchemy ORM with declarative base; pydantic-settings for typed environment variables; python-jose (HS256) for JWT; passlib with bcrypt for password hashing; uvicorn as the dev server.

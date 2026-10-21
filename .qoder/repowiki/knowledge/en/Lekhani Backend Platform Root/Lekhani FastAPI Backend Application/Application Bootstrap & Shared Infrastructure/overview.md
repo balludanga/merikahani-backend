@@ -1,1 +1,0 @@
-Bootstraps the FastAPI application, configures settings and database access, and provides shared security, dependency injection, and middleware used across all API routers.
