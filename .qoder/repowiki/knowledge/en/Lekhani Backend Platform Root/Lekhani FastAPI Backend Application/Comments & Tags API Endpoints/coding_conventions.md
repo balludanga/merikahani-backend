@@ -1,0 +1,4 @@
+- Endpoints are organized as one FastAPI `APIRouter` per resource file under `app/api/endpoints/`, instantiated at module level and mounted elsewhere.
+- Database sessions are injected via `Depends(get_db)` and authentication state via `Depends(get_current_user)` or `Depends(get_current_user_optional)` rather than manual session handling.
+- Resource existence checks raise `HTTPException(status_code=404, detail=...)` before proceeding, and authorization failures raise 403 with a human-readable detail string.
+- SQLAlchemy models inherit from `Base` and declare `created_at` / `updated_at` timestamps using `datetime.utcnow` defaults, with relationships expressed via `relationship(..., back_populates=...)`.

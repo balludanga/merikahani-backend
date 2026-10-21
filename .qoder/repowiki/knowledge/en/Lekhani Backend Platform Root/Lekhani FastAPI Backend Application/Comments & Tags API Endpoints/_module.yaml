@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: app/comments_and_tags
+title: Comments & Tags API Endpoints
+scope:
+    - app/api/endpoints/comments.py
+    - app/api/endpoints/tags.py
+    - app/models/comment.py
+    - app/models/tag.py
+source_files: []
+depends_on: []
+related_to: []

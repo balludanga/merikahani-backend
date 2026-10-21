@@ -18,4 +18,10 @@ class User(Base):
 
     posts = relationship("Post", back_populates="author", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="author", cascade="all, delete-orphan")
+    following = relationship(
+        "Follow", foreign_keys="Follow.follower_id", back_populates="follower", cascade="all, delete-orphan"
+    )
+    followers = relationship(
+        "Follow", foreign_keys="Follow.following_id", back_populates="following_user", cascade="all, delete-orphan"
+    )
 

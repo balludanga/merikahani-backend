@@ -1,0 +1,1 @@
+FastAPI endpoints for user registration, Google OAuth login, password-based login, profile lookup, and the SQLAlchemy User model backing them.

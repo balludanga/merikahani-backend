@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: app/auth_and_users
+title: Authentication & User Management Endpoints
+scope:
+    - app/api/endpoints/auth.py
+    - app/api/endpoints/users.py
+    - app/models/user.py
+source_files: []
+depends_on: []
+related_to:
+    - path: tests

@@ -1,0 +1,1 @@
+Run the app locally with `uvicorn app.main:app` or `python -m app.main`; the default SQLite database file lives at `app.db` (two directories above `core/config.py`). Production requires `DATABASE_URL`, `SECRET_KEY`, and optionally `GOOGLE_CLIENT_ID`, `FRONTEND_URL`, `DEBUG` environment variables.
