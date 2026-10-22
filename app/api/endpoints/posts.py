@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from datetime import datetime
+import base64
+import binascii
 import re
+import uuid
 from app.database import get_db
 from app.models.post import Post
 from app.models.user import User
@@ -13,23 +17,41 @@ from app.models.bookmark import Bookmark
 from app.models.tag import Tag, post_tags
 from app.schemas.post import PostCreate, PostUpdate, PostResponse, ClapResponse
 from app.core.dependencies import get_current_user, get_current_user_optional
-from app.core.content import apply_read_gate
+from app.core.content import apply_read_gate, can_view_post
+from app.core.ratelimit import actions, enforce
 from app.core.sanitize import clean_html
 
 router = APIRouter()
 
 MAX_TAGS_PER_POST = 5
+MAX_CLAPS_PER_POST = 50
+# Per-account write limits (window seconds): posts/hour, claps/hour.
+POST_CREATE_LIMIT = (30, 60 * 60)
+CLAP_LIMIT = (300, 60 * 60)
+# Default and maximum rows for lists that used to be unbounded.
+OWN_LIST_DEFAULT = 200
+OWN_LIST_MAX = 500
 
 
 def generate_slug(title: str) -> str:
     slug = (title or "").strip().lower()
     # Keep the full Devanagari block (incl. matras and nukta) so Hindi
     # titles and tags produce readable slugs.
-    slug = re.sub(r"[^\w\s\u0900-\u097F-]", "", slug, flags=re.UNICODE)
+    slug = re.sub(r"[^\w\sऀ-ॿ-]", "", slug, flags=re.UNICODE)
     slug = re.sub(r"[-\s]+", "-", slug).strip("-")[:80]
     if not slug:
         slug = f"lekh-{int(datetime.utcnow().timestamp())}"
     return slug
+
+
+def unique_suffix(slug: str) -> str:
+    return f"{slug}-{uuid.uuid4().hex[:8]}"
+
+
+def like_pattern(term: str) -> str:
+    """Escape LIKE wildcards so a search for '%' or '_' matches literally."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def normalize_tags(names, db: Session):
@@ -83,23 +105,54 @@ def decorate_posts(posts, user: Optional[User], db: Session):
     return posts
 
 
+def public_base_url(request: Request) -> str:
+    """Scheme + host the caller used (Render/Vercel send the forwarded values)."""
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host.split(',')[0].strip()}"
+
+
+def cover_url(request: Request, post: Post) -> str:
+    version = int((post.updated_at or datetime.utcnow()).timestamp())
+    return f"{public_base_url(request)}/api/posts/{post.id}/cover?v={version}"
+
+
+def list_response(posts, request: Request) -> List[PostResponse]:
+    """Light list payload: no rich body, and published inline cover images become URLs.
+
+    Built from copies so the ORM rows (and the stored cover) are never modified.
+    """
+    items = []
+    for post in posts:
+        item = PostResponse.model_validate(post)
+        item.content_html = None
+        if (item.cover_image or "").startswith("data:") and post.published == 1:
+            item.cover_image = cover_url(request, post)
+        items.append(item)
+    return items
+
+
 @router.get("", response_model=List[PostResponse])
 def get_posts(
-    skip: int = Query(0, ge=0),
+    request: Request,
+    skip: int = Query(0, ge=0, le=100000),
     limit: int = Query(10, ge=1, le=100),
     published: Optional[int] = Query(None),
-    topic: Optional[str] = Query(None),
-    tag: Optional[str] = Query(None),
+    topic: Optional[str] = Query(None, max_length=50),
+    tag: Optional[str] = Query(None, max_length=80),
     feed: Optional[str] = Query(None),
-    q: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, max_length=100),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    query = db.query(Post)
-    if published is not None:
-        query = query.filter(Post.published == published)
-    else:
+    query = db.query(Post).options(selectinload(Post.author))
+    if published is None or published == 1:
         query = query.filter(Post.published == 1)
+    else:
+        # Drafts are private: only the signed-in author ever sees their own.
+        if current_user is None:
+            return []
+        query = query.filter(Post.published == published, Post.author_id == current_user.id)
 
     if topic:
         query = query.filter(Post.topic == topic)
@@ -118,29 +171,34 @@ def get_posts(
             return []
         query = query.join(post_tags, post_tags.c.post_id == Post.id).filter(post_tags.c.tag_id == tag_row.id)
 
-    if q:
-        like = f"%{q}%"
-        query = query.filter(
-            or_(Post.title.ilike(like), Post.subtitle.ilike(like), Post.content.ilike(like))
-        )
+    if q and q.strip():
+        like = like_pattern(q.strip())
+        conditions = [Post.title.ilike(like, escape="\\"), Post.subtitle.ilike(like, escape="\\")]
+        # Signed-out readers only see a teaser, so don't let search reveal the rest.
+        if current_user is not None:
+            conditions.append(Post.content.ilike(like, escape="\\"))
+        query = query.filter(or_(*conditions))
 
     posts = query.order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
-    return posts
+    return list_response(posts, request)
 
 
 @router.get("/me", response_model=List[PostResponse])
 def get_my_posts(
+    request: Request,
     published: Optional[int] = Query(None),
+    skip: int = Query(0, ge=0, le=100000),
+    limit: int = Query(OWN_LIST_DEFAULT, ge=1, le=OWN_LIST_MAX),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Post).filter(Post.author_id == current_user.id)
+    query = db.query(Post).options(selectinload(Post.author)).filter(Post.author_id == current_user.id)
     if published is not None:
         query = query.filter(Post.published == published)
-    posts = query.order_by(Post.updated_at.desc()).all()
+    posts = query.order_by(Post.updated_at.desc()).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
-    return posts
+    return list_response(posts, request)
 
 
 @router.get("/slug/{slug}", response_model=PostResponse)
@@ -150,8 +208,8 @@ def get_post_by_slug(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     post = db.query(Post).filter(Post.slug == slug).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+    if not post or not can_view_post(post, current_user):
+        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
     decorate_posts([post], current_user, db)
     return post
 
@@ -159,18 +217,48 @@ def get_post_by_slug(
 @router.get("/user/{user_id}", response_model=List[PostResponse])
 def get_user_posts(
     user_id: int,
+    request: Request,
     published: Optional[int] = Query(None),
+    skip: int = Query(0, ge=0, le=100000),
+    limit: int = Query(OWN_LIST_DEFAULT, ge=1, le=OWN_LIST_MAX),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    query = db.query(Post).filter(Post.author_id == user_id)
-    if published is not None:
+    query = db.query(Post).options(selectinload(Post.author)).filter(Post.author_id == user_id)
+    is_owner = current_user is not None and current_user.id == user_id
+    if is_owner and published is not None:
         query = query.filter(Post.published == published)
     else:
         query = query.filter(Post.published == 1)
-    posts = query.order_by(Post.created_at.desc()).all()
+    posts = query.order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
-    return posts
+    return list_response(posts, request)
+
+
+@router.get("/{post_id}/cover")
+def get_post_cover(
+    post_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Serve an inline (data:) cover image as a real, cacheable image response."""
+    post = db.query(Post).filter(Post.id == post_id, Post.published == 1).first()
+    cover = post.cover_image if post else None
+    if not cover:
+        raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
+    if not cover.startswith("data:"):
+        return Response(status_code=307, headers={"Location": cover})
+    try:
+        header, encoded = cover.split(",", 1)
+        content_type = header[5:].split(";")[0] or "image/jpeg"
+        binary = base64.b64decode(encoded)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
+    etag = f'"{post.id}-{int((post.updated_at or datetime.utcnow()).timestamp())}"'
+    headers = {"ETag": etag, "Cache-Control": "public, max-age=86400"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=binary, media_type=content_type, headers=headers)
 
 
 @router.get("/{post_id}", response_model=PostResponse)
@@ -180,8 +268,8 @@ def get_post(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+    if not post or not can_view_post(post, current_user):
+        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
     decorate_posts([post], current_user, db)
     return post
 
@@ -192,26 +280,36 @@ def create_post(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    enforce(actions, f"post:{current_user.id}", *POST_CREATE_LIMIT, record=True)
     slug = generate_slug(post_data.title)
-    existing = db.query(Post).filter(Post.slug == slug).first()
-    if existing:
-        slug = f"{slug}-{int(datetime.utcnow().timestamp())}"
+    if db.query(Post).filter(Post.slug == slug).first():
+        slug = unique_suffix(slug)
 
-    db_post = Post(
-        title=post_data.title,
-        subtitle=post_data.subtitle,
-        content=post_data.content,
-        content_html=clean_html(post_data.content_html),
-        slug=slug,
-        cover_image=post_data.cover_image,
-        topic=post_data.topic,
-        author_id=current_user.id,
-        published=post_data.published,
-        clap_count=0,
-    )
-    db_post.tags = normalize_tags(post_data.tags, db)
-    db.add(db_post)
-    db.commit()
+    db_post = None
+    for attempt in range(2):
+        db_post = Post(
+            title=post_data.title,
+            subtitle=post_data.subtitle,
+            content=post_data.content,
+            content_html=clean_html(post_data.content_html),
+            slug=slug,
+            cover_image=post_data.cover_image,
+            topic=post_data.topic,
+            author_id=current_user.id,
+            published=post_data.published,
+            clap_count=0,
+        )
+        db_post.tags = normalize_tags(post_data.tags, db)
+        db.add(db_post)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            # Two requests chose the same slug at once: retry with a random suffix.
+            db.rollback()
+            if attempt == 1:
+                raise
+            slug = unique_suffix(slug)
     db.refresh(db_post)
     db_post.my_claps = 0
     db_post.bookmarked = False
@@ -227,17 +325,17 @@ def update_post(
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
 
     if post.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this post")
+        raise HTTPException(status_code=403, detail="आप इस रचना को बदल नहीं सकते")
 
-    update_data = post_data.dict(exclude_unset=True)
+    update_data = post_data.model_dump(exclude_unset=True)
     if "title" in update_data and update_data["title"] != post.title:
         slug = generate_slug(update_data["title"])
         existing = db.query(Post).filter(Post.slug == slug, Post.id != post_id).first()
         if existing:
-            slug = f"{slug}-{int(datetime.utcnow().timestamp())}"
+            slug = unique_suffix(slug)
         update_data["slug"] = slug
 
     new_tags = update_data.pop("tags", None)
@@ -249,7 +347,11 @@ def update_post(
     if new_tags is not None:
         post.tags = normalize_tags(new_tags, db)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="यह शीर्षक अभी उपयोग में है, कृपया दोबारा कोशिश करें")
     db.refresh(post)
     decorate_posts([post], current_user, db)
     return post
@@ -263,10 +365,10 @@ def delete_post(
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
 
     if post.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this post")
+        raise HTTPException(status_code=403, detail="आप इस रचना को हटा नहीं सकते")
 
     db.delete(post)
     db.commit()
@@ -280,24 +382,38 @@ def clap_post(
     current_user: User = Depends(get_current_user),
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+    if not post or not can_view_post(post, current_user):
+        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
+    enforce(actions, f"clap:{current_user.id}", *CLAP_LIMIT, record=True)
 
-    clap = (
+    mine = (Clap.user_id == current_user.id) & (Clap.post_id == post_id)
+    # Atomic increments: concurrent taps can neither lose counts nor hit the
+    # unique constraint with a 500.
+    bumped = (
         db.query(Clap)
-        .filter(Clap.user_id == current_user.id, Clap.post_id == post_id)
-        .first()
+        .filter(mine, Clap.count < MAX_CLAPS_PER_POST)
+        .update({Clap.count: Clap.count + 1}, synchronize_session=False)
     )
-    if clap:
-        if clap.count >= 50:
-            return ClapResponse(clap_count=post.clap_count or 0, my_claps=clap.count)
-        clap.count += 1
-    else:
-        clap = Clap(user_id=current_user.id, post_id=post_id, count=1)
-        db.add(clap)
-
-    post.clap_count = (post.clap_count or 0) + 1
+    if not bumped:
+        existing = db.query(Clap).filter(mine).first()
+        if existing is None:
+            try:
+                db.add(Clap(user_id=current_user.id, post_id=post_id, count=1))
+                db.flush()
+                bumped = 1
+            except IntegrityError:
+                db.rollback()
+                bumped = (
+                    db.query(Clap)
+                    .filter(mine, Clap.count < MAX_CLAPS_PER_POST)
+                    .update({Clap.count: Clap.count + 1}, synchronize_session=False)
+                )
+    if bumped:
+        db.query(Post).filter(Post.id == post_id).update(
+            {Post.clap_count: func.coalesce(Post.clap_count, 0) + 1, Post.updated_at: Post.updated_at},
+            synchronize_session=False,
+        )
     db.commit()
-    db.refresh(post)
-    db.refresh(clap)
-    return ClapResponse(clap_count=post.clap_count, my_claps=clap.count)
+    clap = db.query(Clap).filter(mine).first()
+    total = db.query(Post.clap_count).filter(Post.id == post_id).scalar()
+    return ClapResponse(clap_count=total or 0, my_claps=clap.count if clap else 0)

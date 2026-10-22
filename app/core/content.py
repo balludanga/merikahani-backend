@@ -9,6 +9,11 @@ from app.models.user import User
 PREVIEW_LIMIT = 600
 
 
+def can_view_post(post: Post, user: Optional[User]) -> bool:
+    """Published posts are public; drafts are visible only to their author."""
+    return post.published == 1 or (user is not None and post.author_id == user.id)
+
+
 def preview_text(content: str, limit: int = PREVIEW_LIMIT) -> str:
     """Trim content to a teaser that ends cleanly at a paragraph boundary."""
     if not content:

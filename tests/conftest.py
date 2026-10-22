@@ -5,6 +5,17 @@ from fastapi.testclient import TestClient
 from app.main import app
 from unittest.mock import patch
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    from app.core import ratelimit
+
+    for limiter in (
+        ratelimit.ip_attempts, ratelimit.login_failures, ratelimit.registrations, ratelimit.actions,
+    ):
+        limiter.clear()
+    yield
+
+
 @pytest.fixture(scope="module")
 def test_client():
     with patch("app.api.endpoints.auth.requests.get") as mock_get, patch(
@@ -16,6 +27,7 @@ def test_client():
             "name": "Test User",
             "picture": "http://example.com/avatar.png",
             "aud": "test-google-client-id",
+            "email_verified": "true",
         }
         client = TestClient(app)
         yield client

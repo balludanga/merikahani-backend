@@ -1,15 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
 from typing import List
 from app.database import get_db
 from app.models.post import Post
 from app.models.tag import Tag, post_tags
-from app.models.clap import Clap
 from app.schemas.post import PostResponse
 from app.schemas.tag import TagResponse
 from app.core.dependencies import get_current_user_optional
-from app.core.content import apply_read_gate
+from app.api.endpoints.posts import decorate_posts, list_response
 
 router = APIRouter()
 
@@ -36,7 +35,8 @@ def get_tags(
 @router.get("/{slug}/posts", response_model=List[PostResponse])
 def get_posts_by_tag(
     slug: str,
-    skip: int = Query(0, ge=0),
+    request: Request,
+    skip: int = Query(0, ge=0, le=100000),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_optional),
@@ -47,6 +47,7 @@ def get_posts_by_tag(
 
     posts = (
         db.query(Post)
+        .options(selectinload(Post.author))
         .join(post_tags, post_tags.c.post_id == Post.id)
         .filter(post_tags.c.tag_id == tag.id, Post.published == 1)
         .order_by(Post.created_at.desc())
@@ -54,18 +55,5 @@ def get_posts_by_tag(
         .limit(limit)
         .all()
     )
-    apply_read_gate(posts, current_user)
-    if current_user:
-        ids = [p.id for p in posts]
-        claps = {
-            row.post_id: row.count
-            for row in db.query(Clap).filter(Clap.user_id == current_user.id, Clap.post_id.in_(ids)).all()
-        }
-        for post in posts:
-            post.my_claps = claps.get(post.id, 0)
-            post.bookmarked = False
-    else:
-        for post in posts:
-            post.my_claps = 0
-            post.bookmarked = False
-    return posts
+    decorate_posts(posts, current_user, db)
+    return list_response(posts, request)

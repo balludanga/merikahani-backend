@@ -13,7 +13,7 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_e
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="साइन इन मान्य नहीं है, कृपया दोबारा साइन इन करें",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -21,7 +21,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
+            detail="सत्र समाप्त हो गया है, कृपया दोबारा साइन इन करें",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except JWTError:
@@ -35,6 +35,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
+        raise credentials_exception
+    # Tokens issued before a takeover / password retirement carry an older version.
+    if int(payload.get("tv", 0)) != (user.token_version or 0):
         raise credentials_exception
     return user
 
