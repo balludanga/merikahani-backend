@@ -8,6 +8,7 @@ from app.models.post import Post
 from app.models.user import User
 from app.schemas.highlight import HighlightCreate, HighlightResponse
 from app.core.dependencies import get_current_user
+from app.core.content import can_view_post
 
 router = APIRouter()
 
@@ -15,6 +16,8 @@ router = APIRouter()
 @router.get("", response_model=List[HighlightResponse])
 def get_my_highlights(
     post_id: Optional[int] = Query(None),
+    skip: int = Query(0, ge=0, le=100000),
+    limit: int = Query(300, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -22,7 +25,7 @@ def get_my_highlights(
     query = db.query(Highlight).filter(Highlight.user_id == current_user.id)
     if post_id is not None:
         query = query.filter(Highlight.post_id == post_id)
-    return query.order_by(Highlight.created_at.desc(), Highlight.id.desc()).all()
+    return query.order_by(Highlight.created_at.desc(), Highlight.id.desc()).offset(skip).limit(limit).all()
 
 
 @router.post("", response_model=HighlightResponse, status_code=status.HTTP_201_CREATED)
@@ -32,7 +35,7 @@ def create_highlight(
     current_user: User = Depends(get_current_user),
 ):
     post = db.query(Post).filter(Post.id == payload.post_id).first()
-    if not post:
+    if not post or not can_view_post(post, current_user):
         raise HTTPException(status_code=404, detail="रचना नहीं मिली")
 
     # Re-highlighting the same passage returns the existing row.
@@ -65,7 +68,7 @@ def delete_highlight(
     if not highlight:
         raise HTTPException(status_code=404, detail="हाइलाइट नहीं मिली")
     if highlight.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this highlight")
+        raise HTTPException(status_code=403, detail="आप यह हाइलाइट नहीं हटा सकते")
     db.delete(highlight)
     db.commit()
     return None

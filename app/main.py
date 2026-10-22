@@ -1,45 +1,52 @@
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from sqlalchemy import inspect, text
 from app.api import api_router
 from app.core.config import settings
-from app.database import engine, Base
-from app import models  # noqa: F401  register ORM models
+from app.migrations import run_migrations
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+if not settings.debug and settings.SECRET_KEY.startswith("your-secret-key"):
+    raise RuntimeError("SECRET_KEY must be set to a private random value when DEBUG is off")
 
+# Bring the schema up to date (creates tables, adds columns/indexes, backfills) before serving.
+run_migrations()
 
-def _ensure_post_columns():
-    inspector = inspect(engine)
-    if "posts" not in inspector.get_table_names():
-        return
-    columns = {col["name"] for col in inspector.get_columns("posts")}
-    statements = []
-    if "topic" not in columns:
-        statements.append("ALTER TABLE posts ADD COLUMN topic VARCHAR")
-    if "clap_count" not in columns:
-        statements.append("ALTER TABLE posts ADD COLUMN clap_count INTEGER DEFAULT 0")
-    if "content_html" not in columns:
-        statements.append("ALTER TABLE posts ADD COLUMN content_html TEXT")
-    if statements:
-        with engine.begin() as conn:
-            for stmt in statements:
-                conn.execute(text(stmt))
+# Interactive API docs are a dev convenience; don't publish the schema in production.
+app = FastAPI(
+    title=settings.app_name,
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
+)
+
+# Largest request body we accept (a post with an inline cover image is ~4 MB).
+MAX_BODY_BYTES = 6 * 1024 * 1024
 
 
-_ensure_post_columns()
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "अनुरोध बहुत बड़ा है"})
+    return await call_next(request)
 
-app = FastAPI(title=settings.app_name)
 
-# Update CORS to handle dynamic Vercel URLs
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    # A unique/foreign-key race that slipped past the checks: a clean 409, not a 500.
+    return JSONResponse(
+        status_code=409,
+        content={"detail": "यह जानकारी पहले से मौजूद है या बदल चुकी है, कृपया दोबारा कोशिश करें"},
+    )
+
+# CORS: our own frontend, this project's Vercel previews, and local dev when DEBUG is on.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOW_ORIGINS + [settings.FRONTEND_URL],
-    # Allow any Vercel deployment of the frontend (preview + production)
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=[settings.FRONTEND_URL.rstrip("/")] + (settings.ALLOW_ORIGINS if settings.debug else []),
+    allow_origin_regex=r"https://lekhanii(-[a-z0-9-]+)?\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,7 +91,7 @@ app.include_router(api_router, prefix="/api")
 
 @app.get("/")
 def read_root():
-    return {"message": "लेखनी — हिंदी लेखकों का अपना मंच", "name": "Lekhani"}
+    return {"message": "लेखनी — हिंदी लेखकों का अपना मंच", "name": "लेखनी"}
 
 if __name__ == "__main__":
     import uvicorn

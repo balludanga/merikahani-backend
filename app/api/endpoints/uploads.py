@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user
+from app.core.ratelimit import actions, enforce
 from app.models.user import User
 
 router = APIRouter()
@@ -37,7 +38,12 @@ class ImagePayload(BaseModel):
 
 
 def _decode(data: str, content_type: str) -> bytes:
-    raw = data.split("base64,", 1)[1] if data.startswith("data:") else data
+    if data.startswith("data:"):
+        if "base64," not in data:
+            raise HTTPException(status_code=400, detail="चित्र डेटा पढ़ा नहीं जा सका।")
+        raw = data.split("base64,", 1)[1]
+    else:
+        raw = data
     try:
         binary = base64.b64decode(raw, validate=True)
     except (binascii.Error, ValueError):
@@ -79,6 +85,8 @@ def upload_image(
             detail="सिर्फ़ JPEG, PNG, WebP या GIF चित्र ही जोड़े जा सकते हैं।",
         )
     binary = _decode(payload.data, payload.content_type)
+    # Anyone can sign up, so cap how much one account can push into the bucket.
+    enforce(actions, f"upload:{db_user.id}", 30, 60 * 60, record=True)
 
     path = f"media/{db_user.id}/{uuid.uuid4().hex}.{ext}"
     base = settings.SUPABASE_URL.rstrip("/")

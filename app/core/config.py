@@ -3,7 +3,7 @@ from typing import List
 import os
 
 class Settings(BaseSettings):
-    app_name: str = "Lekhani"
+    app_name: str = "लेखनी"
     admin_email: str = "admin@example.com"
     items_per_page: int = 10
     debug: bool = os.getenv("DEBUG", "true").lower() == "true"
@@ -35,11 +35,10 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")
 
     # CORS - allow both local and production domains
+    # Local dev origins; main.py only honours these when DEBUG is on.
     ALLOW_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
-        "https://*.vercel.app",  # All Vercel preview deployments
-        "https://vagally-matted-kristen.ngrok-free.dev"
     ]
 
     # Server

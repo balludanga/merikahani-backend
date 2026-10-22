@@ -5,6 +5,8 @@ so the reading page can render it without executing attacker-controlled
 markup. Structure mirrors what the editor can actually produce.
 """
 
+from urllib.parse import urlparse
+
 import bleach
 
 ALLOWED_TAGS = [
@@ -21,6 +23,12 @@ ALLOWED_PROTOCOLS = ["http", "https", "mailto"]
 # Only these iframe hosts may be embedded (video embeds from the editor).
 EMBED_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com", "player.vimeo.com")
 
+# Permissions an embedded player may request; anything else is dropped.
+SAFE_ALLOW_TOKENS = {
+    "accelerometer", "autoplay", "clipboard-write", "encrypted-media",
+    "fullscreen", "gyroscope", "picture-in-picture", "web-share",
+}
+
 
 def _allow_attr(tag, attr, value):
     if value is None:
@@ -36,11 +44,25 @@ def _allow_attr(tag, attr, value):
         )
     if tag == "a" and attr == "href":
         return _href_ok(value)
+    if tag == "a" and attr == "title":
+        return True
     if tag == "img" and attr == "src":
         return _href_ok(value)
+    if tag == "img" and attr in ("alt", "title"):
+        return True
+    if tag == "img" and attr in ("width", "height"):
+        return value.isdigit() and len(value) <= 4
+    if tag == "img" and attr == "loading":
+        return value in ("lazy", "eager")
     if tag == "iframe":
-        if attr in ("width", "height", "frameborder", "allowfullscreen", "allow", "title"):
+        if attr in ("width", "height", "frameborder", "allowfullscreen", "title"):
             return True
+        if attr == "allow":
+            return all(
+                token.strip() in SAFE_ALLOW_TOKENS
+                for token in value.replace(",", ";").split(";")
+                if token.strip()
+            )
         if attr == "src":
             return _embed_ok(value)
     return False
@@ -48,12 +70,21 @@ def _allow_attr(tag, attr, value):
 
 def _href_ok(value):
     v = (value or "").strip().lower()
+    if v.startswith(("//", "/\\")):  # protocol-relative: points at another site
+        return False
     return v.startswith(("http://", "https://", "mailto:", "/"))
 
 
 def _embed_ok(value):
-    v = (value or "").lower()
-    return any(host in v for host in EMBED_HOSTS)
+    """https URL whose host is exactly an allowed host (or a subdomain of one)."""
+    try:
+        parsed = urlparse((value or "").strip())
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        return False
+    return any(host == allowed or host.endswith("." + allowed) for allowed in EMBED_HOSTS)
 
 
 ALLOWED_ATTRS = {

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from app.models.user import User
 from app.models.follow import Follow
-from app.schemas.user import UserResponse
+from app.schemas.user import PublicUserResponse
 from app.core.dependencies import get_current_user
 
 router = APIRouter()
@@ -34,7 +35,10 @@ def follow_user(
     )
     if not existing:
         db.add(Follow(follower_id=current_user.id, following_id=target.id))
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()  # a concurrent request already followed
 
     followers = db.query(Follow).filter(Follow.following_id == target.id).count()
     return {"following": True, "follower_count": followers}
@@ -60,9 +64,11 @@ def unfollow_user(
     return {"following": False, "follower_count": followers}
 
 
-@router.get("/{user_id}/followers", response_model=List[UserResponse])
+@router.get("/{user_id}/followers", response_model=List[PublicUserResponse])
 def get_followers(
     user_id: int,
+    skip: int = Query(0, ge=0, le=100000),
+    limit: int = Query(100, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     _get_target_user(db, user_id)
@@ -71,14 +77,18 @@ def get_followers(
         .join(Follow, Follow.follower_id == User.id)
         .filter(Follow.following_id == user_id)
         .order_by(Follow.created_at.desc())
+        .offset(skip)
+        .limit(limit)
         .all()
     )
     return rows
 
 
-@router.get("/{user_id}/following", response_model=List[UserResponse])
+@router.get("/{user_id}/following", response_model=List[PublicUserResponse])
 def get_following(
     user_id: int,
+    skip: int = Query(0, ge=0, le=100000),
+    limit: int = Query(100, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     _get_target_user(db, user_id)
@@ -87,6 +97,8 @@ def get_following(
         .join(Follow, Follow.following_id == User.id)
         .filter(Follow.follower_id == user_id)
         .order_by(Follow.created_at.desc())
+        .offset(skip)
+        .limit(limit)
         .all()
     )
     return rows

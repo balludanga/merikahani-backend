@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 api_router = APIRouter()
 
-from .endpoints import auth, posts, comments, follows, bookmarks, tags, users, highlights, seo, uploads
+from .endpoints import auth, posts, comments, follows, bookmarks, tags, users, highlights, seo, uploads, prerender
 
 api_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
 api_router.include_router(posts.router, prefix="/posts", tags=["posts"])
@@ -14,3 +14,4 @@ api_router.include_router(bookmarks.router, prefix="/bookmarks", tags=["bookmark
 api_router.include_router(highlights.router, prefix="/highlights", tags=["highlights"])
 api_router.include_router(tags.router, prefix="/tags", tags=["tags"])
 api_router.include_router(seo.router, tags=["seo"])
+api_router.include_router(prerender.router, prefix="/prerender", tags=["seo"])

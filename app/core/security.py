@@ -16,6 +16,9 @@ def get_password_hash(password: str) -> str:
         password = password[:72]
     return pwd_context.hash(password)
 
+# Verified against when a login names an unknown email, so timing doesn't reveal it.
+DUMMY_HASH = get_password_hash("not-a-real-password")
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
