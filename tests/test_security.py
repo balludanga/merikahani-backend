@@ -235,8 +235,8 @@ def test_cover_images_served_as_urls_in_lists(test_client, writer_a):
     assert image.status_code == 200 and image.headers["content-type"] == "image/png"
     assert image.content.startswith(b"\x89PNG")
     assert test_client.get(f"/api/posts/{post['id']}/cover", headers={"If-None-Match": image.headers["etag"]}).status_code == 304
-    # The single-story view still carries the stored image.
-    assert test_client.get(f"/api/posts/{post['id']}").json()["cover_image"] == cover
+    # The author's own view of the story still carries the stored image (see the test below).
+    assert test_client.get(f"/api/posts/{post['id']}", headers=writer_a["headers"]).json()["cover_image"] == cover
 
 
 def test_anonymous_search_cannot_probe_hidden_text(test_client, writer_a):
@@ -385,3 +385,34 @@ def test_migrations_upgrade_a_legacy_database_and_retire_weak_google_hashes(tmp_
     assert (rows[2].auth_provider, rows[2].email_verified, rows[2].token_version, rows[2].hashed_password) == ("password", 0, 0, "PWHASH")
     assert {"topic", "clap_count", "content_html"} <= post_cols
     assert {"ix_posts_published", "ix_posts_created_at", "ix_comments_post_id", "ix_claps_post_id"} <= indexes
+
+
+def test_readers_get_cover_url_but_the_author_keeps_the_stored_image(test_client, writer_a, writer_b):
+    import base64
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"1" * 64).decode()
+    cover = f"data:image/png;base64,{png}"
+    post = test_client.post(
+        "/api/posts",
+        json={"title": f"कवर दो {uuid.uuid4().hex[:6]}", "content": "पाठ", "published": 1, "cover_image": cover},
+        headers=writer_a["headers"],
+    ).json()
+    for url in (f"/api/posts/{post['id']}", f"/api/posts/slug/{post['slug']}"):
+        anon = test_client.get(url).json()
+        assert anon["cover_image"].startswith("http") and anon["cover_image"].count("/cover") == 1
+        assert test_client.get(url, headers=writer_b["headers"]).json()["cover_image"].startswith("http")
+        assert test_client.get(url, headers=writer_a["headers"]).json()["cover_image"] == cover  # author: raw
+
+    # An editor that echoed the served URL back must not overwrite the real image or loop.
+    served = test_client.get(f"/api/posts/{post['id']}").json()["cover_image"]
+    saved = test_client.put(f"/api/posts/{post['id']}", json={"cover_image": served}, headers=writer_a["headers"])
+    assert saved.status_code == 200 and saved.json()["cover_image"] == cover
+    created = test_client.post(
+        "/api/posts",
+        json={"title": f"कवर तीन {uuid.uuid4().hex[:6]}", "content": "पाठ", "published": 1, "cover_image": served},
+        headers=writer_a["headers"],
+    ).json()
+    assert created["cover_image"] in (None, "")
+    assert test_client.get(f"/api/posts/{created['id']}/cover").status_code == 404
+
+    # The image itself is still served.
+    assert test_client.get(f"/api/posts/{post['id']}/cover").content.startswith(b"\x89PNG")

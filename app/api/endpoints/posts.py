@@ -117,6 +117,19 @@ def cover_url(request: Request, post: Post) -> str:
     return f"{public_base_url(request)}/api/posts/{post.id}/cover?v={version}"
 
 
+SELF_COVER_RE = re.compile(r"/api/posts/\d+/cover(\?|$)")
+
+
+def reader_view(post: Post, viewer: Optional[User], request: Request) -> PostResponse:
+    """Single-story response. Readers get inline covers as a cacheable image URL;
+    the author keeps the stored value so the editor can save it back unchanged."""
+    item = PostResponse.model_validate(post)
+    is_author = viewer is not None and viewer.id == post.author_id
+    if (item.cover_image or "").startswith("data:") and post.published == 1 and not is_author:
+        item.cover_image = cover_url(request, post)
+    return item
+
+
 def list_response(posts, request: Request) -> List[PostResponse]:
     """Light list payload: no rich body, and published inline cover images become URLs.
 
@@ -204,6 +217,7 @@ def get_my_posts(
 @router.get("/slug/{slug}", response_model=PostResponse)
 def get_post_by_slug(
     slug: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
@@ -211,7 +225,7 @@ def get_post_by_slug(
     if not post or not can_view_post(post, current_user):
         raise HTTPException(status_code=404, detail="रचना नहीं मिली")
     decorate_posts([post], current_user, db)
-    return post
+    return reader_view(post, current_user, request)
 
 
 @router.get("/user/{user_id}", response_model=List[PostResponse])
@@ -247,6 +261,8 @@ def get_post_cover(
     if not cover:
         raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
     if not cover.startswith("data:"):
+        if SELF_COVER_RE.search(cover):  # a stored link back to this endpoint would loop forever
+            raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
         return Response(status_code=307, headers={"Location": cover})
     try:
         header, encoded = cover.split(",", 1)
@@ -264,6 +280,7 @@ def get_post_cover(
 @router.get("/{post_id}", response_model=PostResponse)
 def get_post(
     post_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
@@ -271,7 +288,7 @@ def get_post(
     if not post or not can_view_post(post, current_user):
         raise HTTPException(status_code=404, detail="रचना नहीं मिली")
     decorate_posts([post], current_user, db)
-    return post
+    return reader_view(post, current_user, request)
 
 
 @router.post("", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
@@ -281,6 +298,8 @@ def create_post(
     current_user: User = Depends(get_current_user),
 ):
     enforce(actions, f"post:{current_user.id}", *POST_CREATE_LIMIT, record=True)
+    if SELF_COVER_RE.search(post_data.cover_image or ""):
+        post_data.cover_image = None
     slug = generate_slug(post_data.title)
     if db.query(Post).filter(Post.slug == slug).first():
         slug = unique_suffix(slug)
@@ -331,6 +350,8 @@ def update_post(
         raise HTTPException(status_code=403, detail="आप इस रचना को बदल नहीं सकते")
 
     update_data = post_data.model_dump(exclude_unset=True)
+    if SELF_COVER_RE.search(update_data.get("cover_image") or ""):
+        update_data.pop("cover_image")  # that is just our own served copy: keep what is stored
     if "title" in update_data and update_data["title"] != post.title:
         slug = generate_slug(update_data["title"])
         existing = db.query(Post).filter(Post.slug == slug, Post.id != post_id).first()
