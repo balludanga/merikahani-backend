@@ -114,3 +114,31 @@ def test_deleting_a_story_removes_its_notifications(test_client, writer_a, write
     assert any(n["post"]["id"] == post["id"] for n in _inbox(test_client, writer_a))
     assert test_client.delete(f"/api/posts/{post['id']}", headers=writer_a["headers"]).status_code == 204
     assert all(n["post"]["id"] != post["id"] for n in _inbox(test_client, writer_a))
+
+
+def test_a_follow_notifies_the_person_followed_once(test_client, writer_a, writer_b):
+    uid = writer_a["user"]["id"]
+    before = _unread(test_client, writer_a)
+    assert test_client.post(f"/api/follows/{uid}", headers=writer_b["headers"]).status_code == 201
+
+    assert _unread(test_client, writer_a) == before + 1
+    follows = [n for n in _inbox(test_client, writer_a) if n["kind"] == "follow" and n["actor"]["id"] == writer_b["user"]["id"]]
+    assert len(follows) == 1
+    assert follows[0]["post"] is None and follows[0]["read"] is False
+    assert "email" not in follows[0]["actor"]
+
+    # Following again, or unfollowing and following again, is not a new notification
+    test_client.post(f"/api/follows/{uid}", headers=writer_b["headers"])
+    test_client.delete(f"/api/follows/{uid}", headers=writer_b["headers"])
+    test_client.post(f"/api/follows/{uid}", headers=writer_b["headers"])
+    follows = [n for n in _inbox(test_client, writer_a) if n["kind"] == "follow" and n["actor"]["id"] == writer_b["user"]["id"]]
+    assert len(follows) == 1
+    assert _unread(test_client, writer_a) == before + 1
+
+    # The person who followed is not told anything
+    assert all(n["kind"] != "follow" or n["actor"]["id"] != writer_b["user"]["id"] for n in _inbox(test_client, writer_b))
+
+
+def test_you_cannot_be_told_you_followed_yourself(test_client, writer_a):
+    uid = writer_a["user"]["id"]
+    assert test_client.post(f"/api/follows/{uid}", headers=writer_a["headers"]).status_code == 400

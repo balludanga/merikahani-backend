@@ -9,6 +9,7 @@ from app.database import Base
 COMMENT = "comment"
 CLAP = "clap"
 HIGHLIGHT = "highlight"
+FOLLOW = "follow"
 
 
 class Notification(Base):
@@ -19,7 +20,8 @@ class Notification(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)  # who is told
     actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # who did it
-    post_id = Column(Integer, ForeignKey("posts.id"), nullable=False, index=True)
+    # Empty for a follow: it is about a person, not a story.
+    post_id = Column(Integer, ForeignKey("posts.id"), nullable=True, index=True)
     kind = Column(String(16), nullable=False)
     comment_id = Column(Integer, nullable=True)
     # A short excerpt: the response, or the highlighted passage (latest one when merged).
