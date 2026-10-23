@@ -1,83 +1,76 @@
+from datetime import datetime
+from urllib.parse import quote
+from xml.sax.saxutils import escape
+
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.responses import HTMLResponse
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from datetime import datetime
-from urllib.parse import quote
-from urllib.parse import quote
-from xml.sax.saxutils import escape
+
+from app.api.endpoints.posts import cover_url
+from app.core.config import settings
+from app.core.content import preview_text
 from app.database import get_db
 from app.models.post import Post
+from app.models.tag import Tag, post_tags
 from app.models.user import User
-from app.core.config import settings
-from app.api.endpoints.posts import cover_url
-from app.core.content import preview_text
 
-# Sitemap protocol limit is 50,000 URLs per file (home page included).
-MAX_SITEMAP_URLS = 49000
-from app.api.endpoints.posts import cover_url
-from fastapi import Request
+# Sitemap protocol limit is 50,000 URLs per file. Static pages (home, about, blog guides)
+# live in the frontend's own sitemap-pages.xml, so this file holds only database-driven URLs.
+MAX_STORY_URLS = 45000
+MAX_HUB_URLS = 2500  # author pages, and tag pages, each
 
 router = APIRouter()
 
+
+def _url_entry(loc: str, lastmod) -> str:
+    entry = f"  <url>\n    <loc>{escape(loc)}</loc>\n"
+    if lastmod:
+        entry += f"    <lastmod>{lastmod.strftime('%Y-%m-%d')}</lastmod>\n"
+    return entry + "  </url>\n"
+
+
 @router.get("/sitemap.xml")
 def generate_sitemap(db: Session = Depends(get_db)):
-    """Generate XML sitemap for SEO"""
-
+    """Stories, author pages and tag pages (published content only)."""
     base_url = settings.FRONTEND_URL.rstrip("/")
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
 
-    # Start XML
-    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-
-    # Homepage
-    xml += '  <url>\n'
-    xml += f'    <loc>{escape(base_url)}/</loc>\n'
-    xml += f'    <lastmod>{datetime.utcnow().strftime("%Y-%m-%d")}</lastmod>\n'
-    xml += '    <changefreq>daily</changefreq>\n'
-    xml += '    <priority>1.0</priority>\n'
-    xml += '  </url>\n'
-
-    # Get all published posts
-    posts = (
-        db.query(Post)
+    stories = (
+        db.query(Post.slug, Post.updated_at)
         .filter(Post.published == 1)
         .order_by(Post.created_at.desc())
-        .limit(MAX_SITEMAP_URLS)
+        .limit(MAX_STORY_URLS)
         .all()
     )
+    for slug, updated_at in stories:
+        xml += _url_entry(f"{base_url}/post/{quote(slug)}", updated_at)
 
-    for post in posts:
-        xml += '  <url>\n'
-        xml += f'    <loc>{escape(base_url)}/post/{escape(quote(post.slug))}</loc>\n'
-        xml += f'    <lastmod>{post.updated_at.strftime("%Y-%m-%d")}</lastmod>\n'
-        xml += '    <changefreq>weekly</changefreq>\n'
-        xml += '    <priority>0.8</priority>\n'
-        xml += '  </url>\n'
-
-    # Get all users with posts
-    users = (
+    authors = (
         db.query(User.id, func.max(Post.updated_at))
         .join(Post, Post.author_id == User.id)
         .filter(Post.published == 1)
         .group_by(User.id)
-        .limit(MAX_SITEMAP_URLS)
+        .limit(MAX_HUB_URLS)
         .all()
     )
+    for user_id, last_update in authors:
+        xml += _url_entry(f"{base_url}/user/{user_id}", last_update)
 
-    for user_id, last_post_update in users:
-        xml += '  <url>\n'
-        xml += f'    <loc>{escape(base_url)}/user/{user_id}</loc>\n'
-        if last_post_update:
-            xml += f'    <lastmod>{last_post_update.strftime("%Y-%m-%d")}</lastmod>\n'
-        xml += '    <changefreq>weekly</changefreq>\n'
-        xml += '    <priority>0.6</priority>\n'
-        xml += '  </url>\n'
+    tags = (
+        db.query(Tag.slug, func.max(Post.updated_at))
+        .join(post_tags, post_tags.c.tag_id == Tag.id)
+        .join(Post, Post.id == post_tags.c.post_id)
+        .filter(Post.published == 1)
+        .group_by(Tag.id)
+        .limit(MAX_HUB_URLS)
+        .all()
+    )
+    for slug, last_update in tags:
+        xml += _url_entry(f"{base_url}/tag/{quote(slug)}", last_update)
 
-    xml += '</urlset>'
+    return Response(content=xml + "</urlset>", media_type="application/xml")
 
-    return Response(content=xml, media_type="application/xml")
 
 @router.get("/rss.xml")
 def generate_rss(db: Session = Depends(get_db)):

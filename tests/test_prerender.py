@@ -69,3 +69,55 @@ def test_hostile_title_cannot_break_out_of_html_or_json_ld(test_client, writer_a
     assert "<script>alert(1)" not in html and "<img src=x" not in html
     article = next(b for b in _ld_blocks(html) if b["@type"] == "BlogPosting")  # still valid JSON
     assert article["headline"] == evil
+
+
+def test_tag_page_lists_its_published_stories_only(test_client, writer_a):
+    tag = f"टैग{uuid.uuid4().hex[:5]}"
+    mine = _story(test_client, writer_a["headers"], tags=[tag])
+    hidden = _story(test_client, writer_a["headers"], tags=[tag], published=0)
+    listing = test_client.get("/api/tags").json()
+    slug = next((t["slug"] for t in listing if t["name"] == tag), None)
+    assert slug, "tag should appear once it has a published story"
+    page = test_client.get(f"/api/prerender/tag/{slug}")
+    assert page.status_code == 200
+    assert mine["title"] in page.text and hidden["title"] not in page.text
+    assert f"/post/{quote(mine['slug'])}" in page.text and "<h1>" in page.text
+    assert 'rel="canonical" href="https://lekhanii.vercel.app/tag/' in page.text
+    blocks = _ld_blocks(page.text)
+    assert next(b for b in blocks if b["@type"] == "CollectionPage")["mainEntity"]["itemListElement"]
+    assert test_client.get("/api/prerender/tag/nonexistent-tag").status_code == 404
+
+
+def test_author_page_lists_stories_without_leaking_email_or_drafts(test_client, writer_a):
+    story = _story(test_client, writer_a["headers"])
+    draft = _story(test_client, writer_a["headers"], published=0)
+    page = test_client.get(f"/api/prerender/user/{writer_a['user']['id']}")
+    assert page.status_code == 200
+    assert story["title"] in page.text and draft["title"] not in page.text
+    assert writer_a["user"]["email"] not in page.text
+    profile = next(b for b in _ld_blocks(page.text) if b["@type"] == "ProfilePage")
+    assert profile["mainEntity"]["@type"] == "Person"
+    assert test_client.get("/api/prerender/user/99999999").status_code == 404
+
+
+def test_author_with_no_published_story_is_noindex(test_client):
+    import uuid as _uuid
+    body = {"email": f"empty_{_uuid.uuid4().hex[:8]}@example.com", "username": f"empty_{_uuid.uuid4().hex[:8]}", "password": "secret123"}
+    user = test_client.post("/api/auth/register", json=body).json()
+    page = test_client.get(f"/api/prerender/user/{user['id']}")
+    assert page.status_code == 200 and "noindex" in page.text
+
+
+def test_sitemap_lists_stories_authors_and_tags_encoded(test_client, writer_a):
+    import xml.etree.ElementTree as ET
+
+    tag = f"साइटमैप{uuid.uuid4().hex[:5]}"
+    story = _story(test_client, writer_a["headers"], tags=[tag])
+    root = ET.fromstring(test_client.get("/api/sitemap.xml").text)
+    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    locs = [e.text for e in root.findall("s:url/s:loc", ns)]
+    assert f"https://lekhanii.vercel.app/post/{quote(story['slug'])}" in locs
+    assert any("/user/" in loc for loc in locs) and any("/tag/" in loc for loc in locs)
+    assert all(loc.isascii() for loc in locs)  # percent-encoded
+    assert "https://lekhanii.vercel.app/" not in locs  # static pages live in the frontend sitemap
+    assert all(e.find("s:lastmod", ns) is not None for e in root.findall("s:url", ns))

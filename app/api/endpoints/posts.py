@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +19,9 @@ from app.schemas.post import PostCreate, PostUpdate, PostResponse, ClapResponse
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.content import apply_read_gate, can_view_post
 from app.core.ratelimit import actions, enforce
+from app.core.notify import notify
+from app.models.notification import CLAP
+from app.core.indexnow import notify as indexnow_notify, urls_for_story_change
 from app.core.sanitize import clean_html
 
 router = APIRouter()
@@ -294,6 +297,7 @@ def get_post(
 @router.post("", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 def create_post(
     post_data: PostCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -332,6 +336,10 @@ def create_post(
     db.refresh(db_post)
     db_post.my_claps = 0
     db_post.bookmarked = False
+    if db_post.published == 1:
+        background_tasks.add_task(
+            indexnow_notify, urls_for_story_change(db_post.slug, db_post.author_id, [t.slug for t in db_post.tags])
+        )
     return db_post
 
 
@@ -339,6 +347,7 @@ def create_post(
 def update_post(
     post_id: int,
     post_data: PostUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -349,6 +358,8 @@ def update_post(
     if post.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="आप इस रचना को बदल नहीं सकते")
 
+    was_published = post.published == 1
+    old_slug, old_tag_slugs = post.slug, [t.slug for t in post.tags]
     update_data = post_data.model_dump(exclude_unset=True)
     if SELF_COVER_RE.search(update_data.get("cover_image") or ""):
         update_data.pop("cover_image")  # that is just our own served copy: keep what is stored
@@ -374,6 +385,13 @@ def update_post(
         db.rollback()
         raise HTTPException(status_code=409, detail="यह शीर्षक अभी उपयोग में है, कृपया दोबारा कोशिश करें")
     db.refresh(post)
+    if was_published or post.published == 1:
+        # Edited, newly published, unpublished or renamed: tell search engines about the new
+        # address and (if it changed or the story went private) the old one, which now 404s.
+        urls = urls_for_story_change(post.slug, post.author_id, [t.slug for t in post.tags] + old_tag_slugs)
+        if old_slug != post.slug:
+            urls += urls_for_story_change(old_slug, post.author_id, [])
+        background_tasks.add_task(indexnow_notify, urls)
     decorate_posts([post], current_user, db)
     return post
 
@@ -381,6 +399,7 @@ def update_post(
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(
     post_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -391,8 +410,15 @@ def delete_post(
     if post.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="आप इस रचना को हटा नहीं सकते")
 
+    urls = (
+        urls_for_story_change(post.slug, post.author_id, [t.slug for t in post.tags])
+        if post.published == 1
+        else []
+    )
     db.delete(post)
     db.commit()
+    if urls:
+        background_tasks.add_task(indexnow_notify, urls)
     return None
 
 
@@ -437,4 +463,6 @@ def clap_post(
     db.commit()
     clap = db.query(Clap).filter(mine).first()
     total = db.query(Post.clap_count).filter(Post.id == post_id).scalar()
+    if bumped and clap:
+        notify(db, post=post, actor_id=current_user.id, kind=CLAP, count=clap.count)
     return ClapResponse(clap_count=total or 0, my_claps=clap.count if clap else 0)

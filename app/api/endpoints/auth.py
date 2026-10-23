@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, Field
+from typing import Optional
+
+from pydantic import BaseModel, Field, model_validator
 import requests
 import logging
 import secrets
@@ -26,7 +28,69 @@ GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 
 
 class GoogleLoginRequest(BaseModel):
-    token: str = Field(min_length=1, max_length=4096)
+    token: Optional[str] = Field(None, min_length=1, max_length=4096)         # ID token (One Tap / button)
+    access_token: Optional[str] = Field(None, min_length=1, max_length=4096)  # pop-up sign-in (works on phones)
+
+    @model_validator(mode="after")
+    def exactly_one(self):
+        if bool(self.token) == bool(self.access_token):
+            raise ValueError("token या access_token में से ठीक एक भेजें")
+        return self
+
+
+def _google_get(url: str, **kwargs):
+    try:
+        return requests.get(url, timeout=10, **kwargs)
+    except requests.RequestException as e:
+        logger.error(f"Google verification unreachable: {e}")
+        raise HTTPException(status_code=502, detail="गूगल (Google) से संपर्क नहीं हो सका, कृपया दोबारा कोशिश करें")
+
+
+def _invalid_google_token() -> HTTPException:
+    return HTTPException(status_code=401, detail="गूगल (Google) टोकन मान्य नहीं है")
+
+
+def _claims_from_id_token(token: str) -> dict:
+    resp = _google_get("https://oauth2.googleapis.com/tokeninfo", params={"id_token": token})
+    if resp.status_code != 200:
+        logger.warning(f"Google ID-token verification failed: {resp.status_code}")
+        raise _invalid_google_token()
+    claims = resp.json()
+    if claims.get("aud") != settings.GOOGLE_CLIENT_ID:
+        logger.warning(f"Google token audience mismatch: got {claims.get('aud')}")
+        raise _invalid_google_token()
+    # `iss` is only present on real Google tokens; when it is there it must be Google.
+    if claims.get("iss") is not None and claims.get("iss") not in GOOGLE_ISSUERS:
+        raise _invalid_google_token()
+    return claims
+
+
+def _claims_from_access_token(access_token: str) -> dict:
+    """Pop-up sign-in hands the page an access token, not an ID token. Ask Google who it
+    belongs to, and refuse any token that was issued to a different app."""
+    info_resp = _google_get("https://oauth2.googleapis.com/tokeninfo", params={"access_token": access_token})
+    if info_resp.status_code != 200:
+        logger.warning(f"Google access-token verification failed: {info_resp.status_code}")
+        raise _invalid_google_token()
+    info = info_resp.json()
+    if info.get("aud") != settings.GOOGLE_CLIENT_ID:
+        logger.warning(f"Google access-token audience mismatch: got {info.get('aud')}")
+        raise _invalid_google_token()
+    profile_resp = _google_get(
+        "https://www.googleapis.com/oauth2/v3/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    if profile_resp.status_code != 200:
+        raise _invalid_google_token()
+    profile = profile_resp.json()
+    if info.get("sub") and profile.get("sub") and info["sub"] != profile["sub"]:
+        raise _invalid_google_token()
+    return {
+        "email": profile.get("email") or info.get("email"),
+        "email_verified": profile.get("email_verified", info.get("email_verified")),
+        "name": profile.get("name"),
+        "picture": profile.get("picture"),
+    }
 
 
 def _unique_username(db: Session, base: str) -> str:
@@ -52,25 +116,7 @@ def _token_response(user: User) -> dict:
 def google_login(payload: GoogleLoginRequest, request: Request, db: Session = Depends(get_db)):
     enforce(ip_attempts, f"google:{client_ip(request)}", LOGIN_IP_LIMIT, LOGIN_WINDOW, record=True)
 
-    try:
-        resp = requests.get(
-            "https://oauth2.googleapis.com/tokeninfo",
-            params={"id_token": payload.token},
-            timeout=10,
-        )
-    except requests.RequestException as e:
-        logger.error(f"Google token verification unreachable: {e}")
-        raise HTTPException(status_code=502, detail="गूगल (Google) से संपर्क नहीं हो सका, कृपया दोबारा कोशिश करें")
-    if resp.status_code != 200:
-        logger.warning(f"Google token verification failed: {resp.status_code}")
-        raise HTTPException(status_code=401, detail="गूगल (Google) टोकन मान्य नहीं है")
-    claims = resp.json()
-    if claims.get("aud") != settings.GOOGLE_CLIENT_ID:
-        logger.warning(f"Google token audience mismatch: got {claims.get('aud')}")
-        raise HTTPException(status_code=401, detail="गूगल (Google) टोकन मान्य नहीं है")
-    # `iss` is only present on real Google tokens; when it is there it must be Google.
-    if claims.get("iss") is not None and claims.get("iss") not in GOOGLE_ISSUERS:
-        raise HTTPException(status_code=401, detail="गूगल (Google) टोकन मान्य नहीं है")
+    claims = _claims_from_access_token(payload.access_token) if payload.access_token else _claims_from_id_token(payload.token)
     # An unverified address must never claim (or create) an account for that email.
     if str(claims.get("email_verified", "")).lower() != "true":
         logger.warning("Google login rejected: email not verified")

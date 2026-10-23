@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 import os
 
 class Settings(BaseSettings):
@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     UPLOAD_BUCKET: str = os.getenv("UPLOAD_BUCKET", "lekhani-media")
+
+    # IndexNow (Bing, Yandex, ...): tells search engines about new/changed/removed stories at once.
+    # The key is public by design - it must also be served at <FRONTEND_URL>/<key>.txt.
+    INDEXNOW_KEY: str = os.getenv("INDEXNOW_KEY", "4740513ae79e931a49c79fb66dd01fee")
+    # None = follow DEBUG (on in production, off locally and in tests); "true"/"false" forces it.
+    INDEXNOW_ENABLED: Optional[bool] = (
+        None if os.getenv("INDEXNOW_ENABLED", "") == "" else os.getenv("INDEXNOW_ENABLED", "").lower() in ("1", "true")
+    )
 
     # Public frontend URL (used for sitemap / RSS links)
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")

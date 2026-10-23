@@ -21,6 +21,8 @@ from app.core.config import settings
 from app.core.content import PREVIEW_LIMIT, preview_text
 from app.database import get_db
 from app.models.post import Post
+from app.models.tag import Tag, post_tags
+from app.models.user import User
 
 router = APIRouter()
 
@@ -251,4 +253,193 @@ def prerender_post(slug: str, request: Request, db: Session = Depends(get_db)):
 </footer>
 </body>
 </html>"""
+    return HTMLResponse(page, headers=CACHE_HEADERS)
+
+
+# ---------------------------------------------------------------------------
+# Hub pages: a tag's stories and an author's stories. They give crawlers a
+# list of story links to follow and are the pages a visitor sees at /tag/... and
+# /user/... in the app (same stories, titles and teasers).
+# ---------------------------------------------------------------------------
+
+HUB_STORIES = 50
+EXCERPT_CHARS = 160
+
+
+def _excerpt(post: Post) -> str:
+    text = " ".join((post.subtitle or preview_text((post.content or "").strip(), EXCERPT_CHARS)).split())
+    return text[:EXCERPT_CHARS]
+
+
+def _hub_stories_html(posts, base_url: str, show_author: bool) -> str:
+    items = []
+    for post in posts:
+        author = ""
+        if show_author:
+            author = f" · {escape(post.author.full_name or post.author.username)}"
+        date = post.created_at.strftime("%d-%m-%Y") if post.created_at else ""
+        items.append(
+            f'<article><h2><a href="{_attr(base_url)}/post/{_attr(quote(post.slug))}">'
+            f'{escape(post.title or "बिना शीर्षक")}</a></h2>'
+            f'<p class="meta">{date}{author}</p><p>{escape(_excerpt(post))}</p></article>'
+        )
+    return "\n".join(items)
+
+
+def _hub_document(
+    *, title: str, description: str, canonical: str, heading: str, intro_html: str,
+    stories_html: str, ld_blocks: list, base_url: str, robots: str = "index, follow",
+) -> str:
+    ld_html = "".join(f'<script type="application/ld+json">{_json_ld(block)}</script>\n' for block in ld_blocks)
+    return f"""<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(title)} - लेखनी</title>
+<meta name="description" content="{_attr(description)}">
+<meta name="robots" content="{_attr(robots)}">
+<link rel="canonical" href="{_attr(canonical)}">
+<link rel="icon" href="{_attr(base_url)}/favicon.ico">
+<meta property="og:site_name" content="लेखनी">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="hi_IN">
+<meta property="og:title" content="{_attr(title)}">
+<meta property="og:description" content="{_attr(description)}">
+<meta property="og:url" content="{_attr(canonical)}">
+<meta property="og:image" content="{_attr(base_url)}/logo.png">
+<meta name="twitter:card" content="summary">
+{ld_html}<style>{STYLE}</style>
+</head>
+<body>
+<header><a href="{_attr(base_url)}/">लेखनी</a> — हिंदी लेखकों का अपना मंच</header>
+<main>
+<h1>{escape(heading)}</h1>
+{intro_html}
+{stories_html}
+</main>
+<footer>
+<a href="{_attr(base_url)}/about">परिचय</a> · <a href="{_attr(base_url)}/blog">ब्लॉग</a> ·
+<a href="{_attr(base_url)}/help">सहायता</a> · <a href="{_attr(base_url)}/rules">नियम</a> ·
+<a href="{_attr(base_url)}/privacy">गोपनीयता</a> · <a href="{_attr(base_url)}/terms">शर्तें</a>
+</footer>
+</body>
+</html>"""
+
+
+def _item_list(posts, base_url: str) -> dict:
+    return {
+        "@type": "ItemList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": index,
+                "url": f"{base_url}/post/{quote(post.slug)}",
+                "name": post.title or "बिना शीर्षक",
+            }
+            for index, post in enumerate(posts, start=1)
+        ],
+    }
+
+
+def _breadcrumbs(base_url: str, name: str, url: str) -> dict:
+    return {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "लेखनी", "item": f"{base_url}/"},
+            {"@type": "ListItem", "position": 2, "name": name, "item": url},
+        ],
+    }
+
+
+@router.get("/tag/{slug}")
+def prerender_tag(slug: str, db: Session = Depends(get_db)):
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    tag = db.query(Tag).filter(Tag.slug == slug).first()
+    posts = []
+    if tag:
+        posts = (
+            db.query(Post)
+            .options(selectinload(Post.author))
+            .join(post_tags, post_tags.c.post_id == Post.id)
+            .filter(post_tags.c.tag_id == tag.id, Post.published == 1)
+            .order_by(Post.created_at.desc())
+            .limit(HUB_STORIES)
+            .all()
+        )
+    if not tag or not posts:
+        return _not_found(base_url)
+
+    url = f"{base_url}/tag/{quote(tag.slug)}"
+    description = f"लेखनी पर \u2018{tag.name}\u2019 टैग की {len(posts)} रचनाएँ पढ़ें।"
+    page = _hub_document(
+        title=f"{tag.name} — रचनाएँ",
+        description=description,
+        canonical=url,
+        heading=tag.name,
+        intro_html=f"<p class=\"sub\">{escape(description)}</p>",
+        stories_html=_hub_stories_html(posts, base_url, show_author=True),
+        ld_blocks=[
+            {
+                "@context": "https://schema.org",
+                "@type": "CollectionPage",
+                "name": tag.name,
+                "description": description,
+                "url": url,
+                "inLanguage": "hi",
+                "mainEntity": _item_list(posts, base_url),
+            },
+            _breadcrumbs(base_url, tag.name, url),
+        ],
+        base_url=base_url,
+    )
+    return HTMLResponse(page, headers=CACHE_HEADERS)
+
+
+@router.get("/user/{user_id}")
+def prerender_user(user_id: int, db: Session = Depends(get_db)):
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return _not_found(base_url)
+    posts = (
+        db.query(Post)
+        .options(selectinload(Post.author))
+        .filter(Post.author_id == user.id, Post.published == 1)
+        .order_by(Post.created_at.desc())
+        .limit(HUB_STORIES)
+        .all()
+    )
+    name = user.full_name or user.username
+    url = f"{base_url}/user/{user.id}"
+    description = (user.bio or "").strip() or f"{name} की {len(posts)} रचनाएँ लेखनी पर पढ़ें।"
+    person = {"@type": "Person", "name": name, "url": url}
+    if user.bio:
+        person["description"] = user.bio.strip()
+    if (user.avatar_url or "").startswith(("http://", "https://")):
+        person["image"] = user.avatar_url
+    intro = f'<p class="sub">{escape(user.bio.strip())}</p>' if user.bio and user.bio.strip() else ""
+    page = _hub_document(
+        title=f"{name} की रचनाएँ",
+        description=description[:200],
+        canonical=url,
+        heading=name,
+        intro_html=intro,
+        stories_html=_hub_stories_html(posts, base_url, show_author=False),
+        ld_blocks=[
+            {
+                "@context": "https://schema.org",
+                "@type": "ProfilePage",
+                "url": url,
+                "inLanguage": "hi",
+                "mainEntity": dict(person, **({"mainEntityOfPage": url})),
+            },
+            {"@context": "https://schema.org", **_item_list(posts, base_url)},
+            _breadcrumbs(base_url, name, url),
+        ],
+        base_url=base_url,
+        # A writer with nothing published yet is a thin page: let it exist but stay out of the index.
+        robots="index, follow" if posts else "noindex, follow",
+    )
     return HTMLResponse(page, headers=CACHE_HEADERS)

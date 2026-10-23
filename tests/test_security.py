@@ -365,6 +365,8 @@ def test_migrations_upgrade_a_legacy_database_and_retire_weak_google_hashes(tmp_
         conn.execute(text("""CREATE TABLE claps (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, post_id INTEGER NOT NULL,
             count INTEGER NOT NULL, created_at DATETIME, updated_at DATETIME)"""))
         conn.execute(text("""CREATE TABLE post_tags (post_id INTEGER, tag_id INTEGER)"""))
+        conn.execute(text("""CREATE TABLE highlights (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+            post_id INTEGER NOT NULL, text TEXT NOT NULL, created_at DATETIME)"""))
         conn.execute(text("INSERT INTO users (id,email,username,hashed_password,avatar_url) VALUES "
                           "(1,'g@x.com','g','WEAK','https://lh3/a.png'),(2,'p@x.com','p','PWHASH',NULL)"))
 
@@ -379,11 +381,17 @@ def test_migrations_upgrade_a_legacy_database_and_retire_weak_google_hashes(tmp_
     with engine.connect() as conn:
         rows = {r.id: r for r in conn.execute(text("SELECT id, auth_provider, email_verified, token_version, hashed_password FROM users"))}
         post_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(posts)"))}
+        highlight_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(highlights)"))}
+        comment_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(comments)"))}
+        notification_tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
         indexes = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))}
     assert (rows[1].auth_provider, rows[1].email_verified, rows[1].token_version) == ("google", 1, 1)
     assert rows[1].hashed_password != "WEAK"
     assert (rows[2].auth_provider, rows[2].email_verified, rows[2].token_version, rows[2].hashed_password) == ("password", 0, 0, "PWHASH")
     assert {"topic", "clap_count", "content_html"} <= post_cols
+    assert {"start_offset", "prefix", "suffix"} <= highlight_cols
+    assert "quote" in comment_cols
+    assert "notifications" in notification_tables
     assert {"ix_posts_published", "ix_posts_created_at", "ix_comments_post_id", "ix_claps_post_id"} <= indexes
 
 
@@ -416,3 +424,65 @@ def test_readers_get_cover_url_but_the_author_keeps_the_stored_image(test_client
 
     # The image itself is still served.
     assert test_client.get(f"/api/posts/{post['id']}/cover").content.startswith(b"\x89PNG")
+
+
+def _fake_response(status, body):
+    from unittest.mock import Mock
+
+    r = Mock()
+    r.status_code = status
+    r.json.return_value = body
+    return r
+
+
+def _popup_sign_in(client, tokeninfo, userinfo, userinfo_status=200):
+    """Pop-up (access token) sign-in: tokeninfo says who the token was issued to, userinfo who it is."""
+    from unittest.mock import patch
+
+    def fake_get(url, **kwargs):
+        if "tokeninfo" in url:
+            assert kwargs["params"] == {"access_token": "ya29.token"}
+            return _fake_response(200, tokeninfo)
+        assert "userinfo" in url and kwargs["headers"]["Authorization"] == "Bearer ya29.token"
+        return _fake_response(userinfo_status, userinfo)
+
+    with patch("app.api.endpoints.auth.requests.get", side_effect=fake_get):
+        return client.post("/api/auth/google-login", json={"access_token": "ya29.token"})
+
+
+def test_popup_google_sign_in_with_access_token(test_client):
+    email = f"popup_{uuid.uuid4().hex[:8]}@example.com"
+    ok = _popup_sign_in(
+        test_client,
+        {"aud": "test-google-client-id", "sub": "123", "email": email, "email_verified": "true"},
+        {"sub": "123", "email": email, "email_verified": True, "name": "फ़ोन उपयोगकर्ता", "picture": "http://example.com/p.png"},
+    )
+    assert ok.status_code == 200, ok.text
+    user = ok.json()["user"]
+    assert user["full_name"] == "फ़ोन उपयोगकर्ता" and "email" in user
+    headers = {"Authorization": f"Bearer {ok.json()['access_token']}"}
+    assert test_client.get("/api/auth/me", headers=headers).json()["email"] == email
+
+
+def test_popup_sign_in_rejects_a_token_issued_to_another_app(test_client):
+    """An access token Google minted for someone else's app must not log anyone in here."""
+    email = f"other_{uuid.uuid4().hex[:8]}@example.com"
+    stolen = _popup_sign_in(
+        test_client,
+        {"aud": "some-other-apps-client-id", "sub": "9", "email": email, "email_verified": "true"},
+        {"sub": "9", "email": email, "email_verified": True},
+    )
+    assert stolen.status_code == 401
+
+
+def test_popup_sign_in_rejects_unverified_email_and_mismatched_identity(test_client):
+    email = f"unv_{uuid.uuid4().hex[:8]}@example.com"
+    ours = {"aud": "test-google-client-id", "sub": "1", "email": email}
+    assert _popup_sign_in(test_client, dict(ours, email_verified="false"), {"sub": "1", "email": email, "email_verified": False}).status_code == 401
+    assert _popup_sign_in(test_client, dict(ours, email_verified="true"), {"sub": "2", "email": email, "email_verified": True}).status_code == 401
+    assert _popup_sign_in(test_client, dict(ours, email_verified="true"), {}, userinfo_status=401).status_code == 401
+
+
+def test_google_login_needs_exactly_one_token(test_client):
+    assert test_client.post("/api/auth/google-login", json={}).status_code == 422
+    assert test_client.post("/api/auth/google-login", json={"token": "a", "access_token": "b"}).status_code == 422
