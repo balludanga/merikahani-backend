@@ -5,15 +5,12 @@ Render instance; if the API ever runs on several instances, move the
 counters to a shared store (Redis / the database).
 """
 
-import logging
 import threading
 import time
 from collections import defaultdict, deque
 from typing import Deque, Dict
 
 from fastapi import HTTPException, Request
-
-logger = logging.getLogger(__name__)
 
 
 class SlidingWindowLimiter:
@@ -68,19 +65,35 @@ REGISTER_WINDOW = 60 * 60
 REGISTER_IP_LIMIT = 10
 
 
+# The per-address limits above are for one visitor. The edge address (below) is shared by
+# everyone arriving through Vercel, so its allowance is this many times larger.
+EDGE_LIMIT_FACTOR = 20
+
+
 def client_ip(request: Request) -> str:
-    """Caller address; the API sits behind Cloudflare, which sets these headers."""
-    # TEMPORARY probe: which address headers reach us behind Vercel + Render? Remove after reading the logs.
-    logger.warning(
-        "ip-probe cf=%r xff=%r real=%r peer=%r",
-        request.headers.get("cf-connecting-ip"),
-        request.headers.get("x-forwarded-for"),
-        request.headers.get("x-real-ip"),
-        request.client.host if request.client else None,
-    )
-    forwarded = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for")
+    """The visitor's address as Vercel saw it: the first x-forwarded-for entry.
+
+    Traffic is browser -> Vercel -> Render (behind Cloudflare). Vercel overwrites any
+    x-forwarded-for the browser sent, so its entry is the real visitor. Someone calling
+    Render directly can put anything there, which is why ``edge_ip`` backs it up.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    return edge_ip(request)
+
+
+def edge_ip(request: Request) -> str:
+    """The address that connected to Cloudflare. Cloudflare sets it, so it cannot be faked.
+
+    Through Vercel this is Vercel's own server (shared by all visitors); on a direct call
+    to Render it is the caller's true address.
+    """
+    connecting = request.headers.get("cf-connecting-ip")
+    if connecting and connecting.strip():
+        return connecting.strip()
     return request.client.host if request.client else "unknown"
 
 

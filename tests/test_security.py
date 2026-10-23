@@ -113,6 +113,52 @@ def test_register_is_rate_limited_and_password_policy(test_client):
     assert over.status_code == 429
 
 
+def _register_from(test_client, visitor, edge, tag):
+    return test_client.post(
+        "/api/auth/register",
+        json={"email": f"{tag}_{uuid.uuid4().hex[:8]}@example.com", "username": f"u{uuid.uuid4().hex[:10]}", "password": "secret123"},
+        headers={"x-forwarded-for": f"{visitor}, {edge}, 172.69.0.1", "cf-connecting-ip": edge},
+    )
+
+
+def test_visitors_behind_the_shared_edge_address_are_limited_separately(test_client):
+    """Through Vercel every visitor shares one cf-connecting-ip; only x-forwarded-for tells them apart."""
+    vercel = "13.235.27.61"
+    for _ in range(10):
+        assert _register_from(test_client, "106.219.120.96", vercel, "a").status_code == 201
+    assert _register_from(test_client, "106.219.120.96", vercel, "a").status_code == 429
+    # A different visitor through the same Vercel address is not blocked by the first one's burst.
+    assert _register_from(test_client, "49.36.1.2", vercel, "b").status_code == 201
+
+
+def test_spoofed_forwarded_for_cannot_dodge_the_limit(test_client):
+    """A direct caller rotates fake x-forwarded-for values but cannot change cf-connecting-ip."""
+    from app.core.ratelimit import EDGE_LIMIT_FACTOR, REGISTER_IP_LIMIT
+
+    allowed = REGISTER_IP_LIMIT * EDGE_LIMIT_FACTOR
+    # Fill the edge allowance directly instead of making hundreds of bcrypt registrations.
+    from app.core import ratelimit
+    for _ in range(allowed):
+        ratelimit.registrations.record("edge:203.0.113.7")
+    blocked = _register_from(test_client, "9.9.9.9", "203.0.113.7", "s")
+    assert blocked.status_code == 429
+
+
+def test_client_ip_prefers_forwarded_for_and_falls_back_to_the_edge_address():
+    from starlette.requests import Request
+    from app.core.ratelimit import client_ip, edge_ip
+
+    def req(headers, peer=("10.0.0.1", 1)):
+        return Request({"type": "http", "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()], "client": peer})
+
+    both = req({"x-forwarded-for": "106.219.120.96, 13.235.27.61, 10.1.1.1", "cf-connecting-ip": "13.235.27.61"})
+    assert client_ip(both) == "106.219.120.96"
+    assert edge_ip(both) == "13.235.27.61"
+    assert client_ip(req({"cf-connecting-ip": "1.2.3.4"})) == "1.2.3.4"
+    assert client_ip(req({})) == "10.0.0.1"
+    assert edge_ip(req({}, peer=None)) == "unknown"
+
+
 def test_google_accounts_cannot_log_in_with_a_password(test_client):
     google = test_client.post("/api/auth/google-login", json={"token": "a" * 80})
     assert google.status_code == 200, google.text
