@@ -9,6 +9,8 @@ from app.schemas.comment import CommentCreate, CommentResponse
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.content import can_view_post
 from app.core.ratelimit import actions, enforce
+from app.core.notify import notify
+from app.models.notification import COMMENT, Notification
 
 router = APIRouter()
 
@@ -51,12 +53,17 @@ def create_comment(
     enforce(actions, f"comment:{current_user.id}", 30, 10 * 60, record=True)
     db_comment = Comment(
         content=comment_data.content,
+        quote=comment_data.quote,
         post_id=comment_data.post_id,
         author_id=current_user.id
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
+    notify(
+        db, post=post, actor_id=current_user.id, kind=COMMENT,
+        comment_id=db_comment.id, text=db_comment.content,
+    )
     return db_comment
 
 @router.delete("/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -75,6 +82,8 @@ def delete_comment(
     if comment.author_id != current_user.id and not is_post_author:
         raise HTTPException(status_code=403, detail="आप यह टिप्पणी नहीं हटा सकते")
     
+    # The author is no longer told about a response that is gone.
+    db.query(Notification).filter(Notification.comment_id == comment.id).delete(synchronize_session=False)
     db.delete(comment)
     db.commit()
     return None

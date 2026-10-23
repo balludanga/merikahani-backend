@@ -92,3 +92,25 @@ def test_popular_tags(test_client, writer_b):
     by_tag = test_client.get(f"/api/tags/{slug}/posts")
     assert by_tag.status_code == 200
     assert any(p["tags"] and "लोकप्रियटैग" in p["tags"] for p in by_tag.json())
+
+
+def test_response_can_quote_the_passage_it_is_about(test_client, writer_a, writer_b):
+    post = _create_post(test_client, writer_a["headers"], "उद्धरण सहित प्रतिक्रिया")
+    quoted = test_client.post(
+        "/api/comments",
+        json={"post_id": post["id"], "content": "बहुत सुंदर पंक्ति", "quote": "  यह   एक \n परीक्षण  "},
+        headers=writer_b["headers"],
+    )
+    assert quoted.status_code == 201, quoted.text
+    assert quoted.json()["quote"] == "यह एक परीक्षण"
+
+    plain = test_client.post(
+        "/api/comments",
+        json={"post_id": post["id"], "content": "सामान्य प्रतिक्रिया", "quote": "   "},
+        headers=writer_b["headers"],
+    )
+    assert plain.status_code == 201
+    assert plain.json()["quote"] is None
+
+    listed = test_client.get(f"/api/comments/post/{post['id']}").json()
+    assert [item["quote"] for item in listed] == ["यह एक परीक्षण", None]

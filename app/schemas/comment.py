@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Optional
 
@@ -7,6 +7,13 @@ class CommentBase(BaseModel):
 
 class CommentCreate(CommentBase):
     post_id: int
+    quote: Optional[str] = None
+
+    @field_validator("quote")
+    @classmethod
+    def tidy_quote(cls, value: Optional[str]) -> Optional[str]:
+        cleaned = " ".join((value or "").split())
+        return cleaned[:1000] or None
 
 class CommentUpdate(BaseModel):
     content: Optional[str] = None
@@ -21,6 +28,7 @@ class CommentAuthor(BaseModel):
 
 class CommentResponse(CommentBase):
     id: int
+    quote: Optional[str] = None
     post_id: int
     author_id: int
     author: CommentAuthor

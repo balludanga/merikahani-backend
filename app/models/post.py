@@ -25,6 +25,7 @@ class Post(Base):
     claps = relationship("Clap", back_populates="post", cascade="all, delete-orphan")
     bookmarks = relationship("Bookmark", back_populates="post", cascade="all, delete-orphan")
     highlights = relationship("Highlight", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="post", cascade="all, delete-orphan")
     tags = relationship("Tag", secondary="post_tags", back_populates="posts", lazy="selectin")
 
     @property
