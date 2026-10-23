@@ -63,3 +63,8 @@ def writer_a(test_client):
 @pytest.fixture(scope="module")
 def writer_b(test_client):
     return _register_and_login(test_client)
+
+
+@pytest.fixture(scope="module")
+def writer_c(test_client):
+    return _register_and_login(test_client)

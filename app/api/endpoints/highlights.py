@@ -25,10 +25,12 @@ def get_my_highlights(
     current_user: User = Depends(get_current_user),
 ):
     """The signed-in reader's own highlights, newest first (optionally for one post)."""
-    query = db.query(Highlight).filter(Highlight.user_id == current_user.id)
+    query = db.query(Highlight).options(selectinload(Highlight.post)).filter(Highlight.user_id == current_user.id)
     if post_id is not None:
         query = query.filter(Highlight.post_id == post_id)
-    return query.order_by(Highlight.created_at.desc(), Highlight.id.desc()).offset(skip).limit(limit).all()
+    rows = query.order_by(Highlight.created_at.desc(), Highlight.id.desc()).offset(skip).limit(limit).all()
+    # A story that has since been unpublished by someone else is no longer readable.
+    return [row for row in rows if row.post is not None and can_view_post(row.post, current_user)]
 
 
 @router.get("/post/{post_id}", response_model=List[PostHighlightResponse])

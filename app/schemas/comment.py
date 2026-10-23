@@ -8,6 +8,8 @@ class CommentBase(BaseModel):
 class CommentCreate(CommentBase):
     post_id: int
     quote: Optional[str] = None
+    # The response being answered (any response; replies to a reply join the same thread).
+    parent_id: Optional[int] = None
 
     @field_validator("quote")
     @classmethod
@@ -29,6 +31,7 @@ class CommentAuthor(BaseModel):
 class CommentResponse(CommentBase):
     id: int
     quote: Optional[str] = None
+    parent_id: Optional[int] = None
     post_id: int
     author_id: int
     author: CommentAuthor

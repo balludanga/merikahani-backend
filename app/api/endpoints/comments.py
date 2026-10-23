@@ -10,7 +10,7 @@ from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.content import can_view_post
 from app.core.ratelimit import actions, enforce
 from app.core.notify import notify
-from app.models.notification import COMMENT, Notification
+from app.models.notification import COMMENT, REPLY, Notification
 
 router = APIRouter()
 
@@ -50,20 +50,43 @@ def create_comment(
     if not post or not can_view_post(post, current_user):
         raise HTTPException(status_code=404, detail="रचना नहीं मिली")
     
+    # Answering a response: it must be on this story. Replies to a reply join the same
+    # thread (threads are one level deep), but the person told is who was answered.
+    answered = None
+    thread_root = None
+    if comment_data.parent_id is not None:
+        answered = (
+            db.query(Comment)
+            .filter(Comment.id == comment_data.parent_id, Comment.post_id == post.id)
+            .first()
+        )
+        if answered is None:
+            raise HTTPException(status_code=404, detail="जिस प्रतिक्रिया का जवाब देना है वह नहीं मिली")
+        thread_root = answered.parent_id or answered.id
+
     enforce(actions, f"comment:{current_user.id}", 30, 10 * 60, record=True)
     db_comment = Comment(
         content=comment_data.content,
-        quote=comment_data.quote,
+        # A passage quote belongs to a top-level response, not to an answer.
+        quote=None if thread_root else comment_data.quote,
+        parent_id=thread_root,
         post_id=comment_data.post_id,
         author_id=current_user.id
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
-    notify(
-        db, post=post, actor_id=current_user.id, kind=COMMENT,
-        comment_id=db_comment.id, text=db_comment.content,
-    )
+    if answered is not None:
+        notify(
+            db, post=post, recipient_id=answered.author_id, actor_id=current_user.id,
+            kind=REPLY, comment_id=db_comment.id, text=db_comment.content,
+        )
+    # The story's author hears about every response, unless the reply above already told them.
+    if answered is None or answered.author_id != post.author_id:
+        notify(
+            db, post=post, actor_id=current_user.id, kind=COMMENT,
+            comment_id=db_comment.id, text=db_comment.content,
+        )
     return db_comment
 
 @router.delete("/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -82,8 +105,9 @@ def delete_comment(
     if comment.author_id != current_user.id and not is_post_author:
         raise HTTPException(status_code=403, detail="आप यह टिप्पणी नहीं हटा सकते")
     
-    # The author is no longer told about a response that is gone.
-    db.query(Notification).filter(Notification.comment_id == comment.id).delete(synchronize_session=False)
+    # Nobody is told about a response that is gone, nor about the answers that go with it.
+    gone = [comment.id] + [reply.id for reply in comment.replies]
+    db.query(Notification).filter(Notification.comment_id.in_(gone)).delete(synchronize_session=False)
     db.delete(comment)
     db.commit()
     return None
