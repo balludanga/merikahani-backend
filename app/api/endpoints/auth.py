@@ -16,8 +16,8 @@ from app.core.security import DUMMY_HASH, get_password_hash, create_access_token
 from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.core.ratelimit import (
-    LOGIN_FAILURE_LIMIT, LOGIN_IP_LIMIT, LOGIN_WINDOW, REGISTER_IP_LIMIT, REGISTER_WINDOW,
-    client_ip, enforce, ip_attempts, login_failures, registrations,
+    EDGE_LIMIT_FACTOR, LOGIN_FAILURE_LIMIT, LOGIN_IP_LIMIT, LOGIN_WINDOW, REGISTER_IP_LIMIT, REGISTER_WINDOW,
+    client_ip, edge_ip, enforce, ip_attempts, login_failures, registrations,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,7 @@ def _token_response(user: User) -> dict:
 @router.post("/google-login", response_model=Token)
 def google_login(payload: GoogleLoginRequest, request: Request, db: Session = Depends(get_db)):
     enforce(ip_attempts, f"google:{client_ip(request)}", LOGIN_IP_LIMIT, LOGIN_WINDOW, record=True)
+    enforce(ip_attempts, f"google-edge:{edge_ip(request)}", LOGIN_IP_LIMIT * EDGE_LIMIT_FACTOR, LOGIN_WINDOW, record=True)
 
     claims = _claims_from_access_token(payload.access_token) if payload.access_token else _claims_from_id_token(payload.token)
     # An unverified address must never claim (or create) an account for that email.
@@ -173,6 +174,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, db: Session = De
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserCreate, request: Request, db: Session = Depends(get_db)):
     enforce(registrations, f"ip:{client_ip(request)}", REGISTER_IP_LIMIT, REGISTER_WINDOW, record=True)
+    enforce(registrations, f"edge:{edge_ip(request)}", REGISTER_IP_LIMIT * EDGE_LIMIT_FACTOR, REGISTER_WINDOW, record=True)
     email = user_data.email.strip().lower()
     if db.query(User.id).filter(func.lower(User.email) == email).first():
         raise HTTPException(status_code=400, detail="यह ईमेल पहले से पंजीकृत है")
@@ -199,6 +201,7 @@ def register(user_data: UserCreate, request: Request, db: Session = Depends(get_
 @router.post("/login", response_model=Token)
 def login(user_data: UserLogin, request: Request, db: Session = Depends(get_db)):
     enforce(ip_attempts, f"login:{client_ip(request)}", LOGIN_IP_LIMIT, LOGIN_WINDOW, record=True)
+    enforce(ip_attempts, f"login-edge:{edge_ip(request)}", LOGIN_IP_LIMIT * EDGE_LIMIT_FACTOR, LOGIN_WINDOW, record=True)
     email = user_data.email.strip().lower()
     failure_key = f"email:{email}"
     enforce(login_failures, failure_key, LOGIN_FAILURE_LIMIT, LOGIN_WINDOW, record=False)
