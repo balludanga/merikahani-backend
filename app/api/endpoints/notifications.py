@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.dependencies import get_current_user
 from app.database import get_db
-from app.models.notification import Notification
+from app.models.notification import FOLLOW, Notification
 from app.models.user import User
 from app.schemas.notification import MarkRead, NotificationResponse, UnreadCount
 
@@ -51,7 +51,8 @@ def list_notifications(
             post=row.post,
         )
         for row in rows
-        if row.actor is not None and row.post is not None
+        # A story event whose story is gone is not worth showing.
+        if row.actor is not None and (row.post is not None or row.kind == FOLLOW)
     ]
 
 

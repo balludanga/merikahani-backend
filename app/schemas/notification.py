@@ -29,7 +29,8 @@ class NotificationResponse(BaseModel):
     created_at: datetime
     read: bool
     actor: NotificationActor
-    post: NotificationPost
+    # Empty for a follow.
+    post: Optional[NotificationPost] = None
 
 
 class UnreadCount(BaseModel):

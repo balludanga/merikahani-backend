@@ -383,6 +383,7 @@ def test_migrations_upgrade_a_legacy_database_and_retire_weak_google_hashes(tmp_
         post_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(posts)"))}
         highlight_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(highlights)"))}
         comment_cols = {r[1] for r in conn.execute(text("PRAGMA table_info(comments)"))}
+        notification_post_nullable = any(r[1] == "post_id" and r[3] == 0 for r in conn.execute(text("PRAGMA table_info(notifications)")))
         notification_tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
         indexes = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))}
     assert (rows[1].auth_provider, rows[1].email_verified, rows[1].token_version) == ("google", 1, 1)
@@ -392,6 +393,7 @@ def test_migrations_upgrade_a_legacy_database_and_retire_weak_google_hashes(tmp_
     assert {"start_offset", "prefix", "suffix"} <= highlight_cols
     assert "quote" in comment_cols
     assert "notifications" in notification_tables
+    assert notification_post_nullable
     assert {"ix_posts_published", "ix_posts_created_at", "ix_comments_post_id", "ix_claps_post_id"} <= indexes
 
 

@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, false
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -13,6 +15,16 @@ class User(Base):
     full_name = Column(String, nullable=True)
     bio = Column(Text, nullable=True)
     avatar_url = Column(String, nullable=True)
+    # Profile customisation (all optional; see app/schemas/profile.py for the rules).
+    tagline = Column(String(120), nullable=True)      # one line under the name
+    status_line = Column(String(120), nullable=True)  # "इन दिनों": what they are working on
+    location = Column(String(80), nullable=True)
+    accent = Column(String(7), nullable=True)         # "#rrggbb" the writer picked
+    cover_style = Column(String(24), nullable=True)   # a banner design key
+    cover_url = Column(String, nullable=True)         # their own uploaded banner
+    genres_json = Column(Text, nullable=True)         # ["कहानी", ...]
+    links_json = Column(Text, nullable=True)          # [{"label": ..., "url": ...}]
+    pinned_json = Column(Text, nullable=True)         # [post ids]
     # 'password' | 'google'. Google accounts never log in with a password.
     auth_provider = Column(String, nullable=False, default="password", server_default="password")
     # True only when Google vouched for the address; password sign-ups are unverified.
@@ -31,3 +43,22 @@ class User(Base):
         "Follow", foreign_keys="Follow.following_id", back_populates="following_user", cascade="all, delete-orphan"
     )
 
+    @staticmethod
+    def _load(raw):
+        try:
+            value = json.loads(raw) if raw else []
+        except (TypeError, ValueError):
+            return []
+        return value if isinstance(value, list) else []
+
+    @property
+    def genres(self):
+        return [g for g in self._load(self.genres_json) if isinstance(g, str)]
+
+    @property
+    def links(self):
+        return [l for l in self._load(self.links_json) if isinstance(l, dict) and l.get("url")]
+
+    @property
+    def pinned_post_ids(self):
+        return [i for i in self._load(self.pinned_json) if isinstance(i, int)]

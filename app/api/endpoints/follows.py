@@ -7,6 +7,8 @@ from app.models.user import User
 from app.models.follow import Follow
 from app.schemas.user import PublicUserResponse
 from app.core.dependencies import get_current_user
+from app.core.notify import notify
+from app.models.notification import FOLLOW
 
 router = APIRouter()
 
@@ -39,6 +41,8 @@ def follow_user(
             db.commit()
         except IntegrityError:
             db.rollback()  # a concurrent request already followed
+        else:
+            notify(db, actor_id=current_user.id, kind=FOLLOW, recipient_id=target.id)
 
     followers = db.query(Follow).filter(Follow.following_id == target.id).count()
     return {"following": True, "follower_count": followers}

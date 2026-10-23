@@ -1,6 +1,8 @@
 from pydantic import BaseModel, EmailStr, ConfigDict, Field
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
+
+from app.schemas.profile import LinkItem
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -22,6 +24,8 @@ class PublicUserResponse(BaseModel):
     full_name: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
+    # The colour the writer chose; their pages are tinted with it.
+    accent: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -35,10 +39,27 @@ class Token(BaseModel):
     token_type: str
     user: UserResponse
 
+class Badge(BaseModel):
+    key: str
+    kind: str
+    label: str
+    hint: str
+
+
 class UserProfileResponse(PublicUserResponse):
+    tagline: Optional[str] = None
+    status_line: Optional[str] = None
+    location: Optional[str] = None
+    cover_style: Optional[str] = None
+    cover_url: Optional[str] = None
+    genres: List[str] = []
+    links: List[LinkItem] = []
+    pinned_post_ids: List[int] = []
+    badges: List[Badge] = []
     follower_count: int = 0
     following_count: int = 0
     post_count: int = 0
+    claps_total: int = 0
     is_following: bool = False
 
 
