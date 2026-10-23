@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 from app.api import api_router
 from app.core.config import settings
+from app.core.errorlog import describe, record_server_error
 from app.migrations import run_migrations
 
 if not settings.debug and settings.SECRET_KEY.startswith("your-secret-key"):
@@ -32,6 +34,19 @@ async def limit_body_size(request: Request, call_next):
     if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
         return JSONResponse(status_code=413, content={"detail": "अनुरोध बहुत बड़ा है"})
     return await call_next(request)
+
+
+@app.middleware("http")
+async def remember_server_errors(request: Request, call_next):
+    """Keep a short log of 5xx answers for the owner's status page."""
+    try:
+        response = await call_next(request)
+    except Exception as exc:  # noqa: BLE001 - re-raised below; the server still answers 500
+        await run_in_threadpool(record_server_error, request.method, request.url.path, 500, describe(exc))
+        raise
+    if response.status_code >= 500:
+        await run_in_threadpool(record_server_error, request.method, request.url.path, response.status_code, None)
+    return response
 
 
 @app.exception_handler(IntegrityError)

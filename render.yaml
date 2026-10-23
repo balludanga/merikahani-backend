@@ -25,6 +25,10 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # Who may open the owner's status page (comma-separated emails). Set it in the Render
+      # dashboard, not here: this file is public. Empty means nobody can.
+      - key: ADMIN_EMAILS
+        sync: false
       - key: UPLOAD_BUCKET
         value: lekhani-media
       - key: FRONTEND_URL
