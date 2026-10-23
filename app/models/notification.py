@@ -10,6 +10,8 @@ COMMENT = "comment"
 CLAP = "clap"
 HIGHLIGHT = "highlight"
 FOLLOW = "follow"
+# Someone answered one of your responses.
+REPLY = "reply"
 
 
 class Notification(Base):

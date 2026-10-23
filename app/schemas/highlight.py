@@ -32,6 +32,14 @@ class HighlightCreate(BaseModel):
         return value[:80] if value else None
 
 
+class HighlightPost(BaseModel):
+    id: int
+    title: str
+    slug: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class HighlightResponse(BaseModel):
     id: int
     post_id: int
@@ -40,6 +48,8 @@ class HighlightResponse(BaseModel):
     prefix: Optional[str] = None
     suffix: Optional[str] = None
     created_at: datetime
+    # The story it is from; filled in for the reader's own list so it can link back.
+    post: Optional[HighlightPost] = None
 
     model_config = ConfigDict(from_attributes=True)
 

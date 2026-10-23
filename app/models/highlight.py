@@ -26,3 +26,4 @@ class Highlight(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     user = relationship("User")
+    post = relationship("Post", viewonly=True)

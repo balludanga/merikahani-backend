@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.dependencies import get_current_user
 from app.database import get_db
+from app.core.notify import prune_notifications
 from app.models.notification import FOLLOW, Notification
 from app.models.user import User
 from app.schemas.notification import MarkRead, NotificationResponse, UnreadCount
@@ -75,4 +76,5 @@ def mark_read(
         query = query.filter(Notification.id.in_(payload.ids[:500]))
     query.update({Notification.read_at: datetime.utcnow()}, synchronize_session=False)
     db.commit()
+    prune_notifications(db, current_user.id)
     return UnreadCount(count=_unread(db, current_user))
