@@ -127,3 +127,17 @@ def test_my_highlights_carry_their_story(test_client, writer_a, writer_b):
     mine = test_client.get("/api/highlights", headers=writer_b["headers"]).json()
     row = next(h for h in mine if h["id"] == made.json()["id"])
     assert row["post"] == {"id": post["id"], "title": post["title"], "slug": post["slug"]}
+
+
+def test_a_response_remembers_where_its_passage_starts(test_client, writer_a, writer_b):
+    post = _create_post(test_client, writer_a["headers"], "स्थान की कहानी")
+    made = _respond(test_client, writer_b, post, "यहाँ", quote="परीक्षण लेख", quote_start=14).json()
+    assert made["quote"] == "परीक्षण लेख" and made["quote_start"] == 14
+    listed = next(c for c in test_client.get(f"/api/comments/post/{post['id']}").json() if c["id"] == made["id"])
+    assert listed["quote_start"] == 14
+
+    # Nonsense positions are dropped, and a position without a passage means nothing.
+    assert _respond(test_client, writer_b, post, "ऋण", quote="अंश", quote_start=-5).json()["quote_start"] is None
+    assert _respond(test_client, writer_b, post, "बिना अंश", quote_start=7).json()["quote_start"] is None
+    top = made
+    assert _respond(test_client, writer_a, post, "जवाब", quote="x", quote_start=3, parent_id=top["id"]).json()["quote_start"] is None

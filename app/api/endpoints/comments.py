@@ -69,6 +69,7 @@ def create_comment(
         content=comment_data.content,
         # A passage quote belongs to a top-level response, not to an answer.
         quote=None if thread_root else comment_data.quote,
+        quote_start=None if thread_root or not comment_data.quote else comment_data.quote_start,
         parent_id=thread_root,
         post_id=comment_data.post_id,
         author_id=current_user.id

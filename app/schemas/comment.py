@@ -8,6 +8,7 @@ class CommentBase(BaseModel):
 class CommentCreate(CommentBase):
     post_id: int
     quote: Optional[str] = None
+    quote_start: Optional[int] = None
     # The response being answered (any response; replies to a reply join the same thread).
     parent_id: Optional[int] = None
 
@@ -16,6 +17,13 @@ class CommentCreate(CommentBase):
     def tidy_quote(cls, value: Optional[str]) -> Optional[str]:
         cleaned = " ".join((value or "").split())
         return cleaned[:1000] or None
+
+    @field_validator("quote_start")
+    @classmethod
+    def start_not_negative(cls, value: Optional[int]) -> Optional[int]:
+        if value is None:
+            return None
+        return value if 0 <= value < 10_000_000 else None
 
 class CommentUpdate(BaseModel):
     content: Optional[str] = None
@@ -31,6 +39,7 @@ class CommentAuthor(BaseModel):
 class CommentResponse(CommentBase):
     id: int
     quote: Optional[str] = None
+    quote_start: Optional[int] = None
     parent_id: Optional[int] = None
     post_id: int
     author_id: int
