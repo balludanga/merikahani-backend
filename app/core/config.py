@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         None if os.getenv("INDEXNOW_ENABLED", "") == "" else os.getenv("INDEXNOW_ENABLED", "").lower() in ("1", "true")
     )
 
+    # Who may open the owner's status page: comma-separated emails. Only an account whose
+    # address Google has verified counts, and an empty list means nobody can.
+    ADMIN_EMAILS: str = os.getenv("ADMIN_EMAILS", "")
+
     # Public frontend URL (used for sitemap / RSS links)
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")
 

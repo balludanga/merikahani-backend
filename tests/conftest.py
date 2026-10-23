@@ -1,6 +1,17 @@
+import atexit
+import os
+import shutil
+import tempfile
 import uuid
 
 import pytest
+
+# Tests run against a throwaway database, never the developer's own app.db. This has to be
+# set before the app is imported, because the database URL is read once at import time.
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="lekhani-tests-")
+atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
+os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(_TEST_DB_DIR, 'test.db')}"
+
 from fastapi.testclient import TestClient
 from app.main import app
 from unittest.mock import patch
