@@ -11,22 +11,24 @@ Only PUBLISHED stories are sent to the speech service: on the free tier Google m
 to improve its products, which is fine for public writing but not for a private draft.
 """
 
+import json
 import logging
 import threading
 import time
 from collections import OrderedDict
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.core import timing
 from app.core.config import settings
 from app.core.content import PREVIEW_LIMIT
 from app.core.dependencies import get_current_user_optional
 from app.core.casting import plan_story
-from app.core.narration import DIALOGUE_STYLE, STYLE, fingerprint, spoken_chars
+from app.core.narration import DIALOGUE_STYLE, STYLE, fingerprint, scan, spoken_chars
 from app.core.ratelimit import actions, client_ip, enforce
 from app.core.speech import SpeechUnavailable, is_available, synthesize
 from app.database import SessionLocal, get_db
@@ -109,7 +111,12 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
                     _partials.popitem(last=False)
             job.total = len(partial.windows)
             chars, voices = partial.chars, partial.voices
-            audio = synthesize(partial.windows, STYLE, DIALOGUE_STYLE, progress, partial.audio)
+            timings: dict = {}
+            audio = synthesize(
+                partial.windows, STYLE, DIALOGUE_STYLE, progress, partial.audio,
+                title_words=len(title.split()), timings_out=timings,
+            )
+            timings_json = timing.dumps(timings) if timings.get("w") else None
         _partials.pop(digest, None)
         month = datetime.utcnow().strftime("%Y-%m")
         db = SessionLocal()
@@ -117,9 +124,10 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
             row = db.query(StoryAudio).filter(StoryAudio.post_id == post_id).first()
             if row:
                 row.content_hash, row.voice, row.audio, row.chars = digest, voices, audio, chars
+                row.timings = timings_json
                 row.created_at = datetime.utcnow()
             else:
-                db.add(StoryAudio(post_id=post_id, content_hash=digest, voice=voices, audio=audio, chars=chars))
+                db.add(StoryAudio(post_id=post_id, content_hash=digest, voice=voices, audio=audio, chars=chars, timings=timings_json))
             usage = db.query(TtsUsage).filter(TtsUsage.month == month).first()
             if usage:
                 usage.chars += chars
@@ -139,10 +147,42 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
         job.failed_at = time.time()
 
 
+def _open_story(post_id: int, db: Session, user: Optional[User]) -> Tuple[Post, str]:
+    """The published story and its text if this visitor may hear it; otherwise the matching HTTP error."""
+    post = db.query(Post).filter(Post.id == post_id, Post.published == 1).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
+    content = post.content or ""
+    if not content.strip():
+        raise HTTPException(status_code=404, detail="सुनाने के लिए कुछ नहीं है")
+    # Same rule as reading: a signed-out visitor only gets the short, ungated stories.
+    if user is None and len(content) > PREVIEW_LIMIT:
+        raise HTTPException(status_code=401, detail="पूरी रचना सुनने के लिए साइन इन करें")
+    if len(content) > settings.TTS_MAX_STORY_CHARS:
+        raise HTTPException(status_code=413, detail="यह रचना सर्वर की आवाज़ के लिए बहुत लंबी है")
+    return post, content
+
+
+def _current_row(db: Session, post: Post, content: str) -> Tuple[Optional[StoryAudio], str]:
+    """(the stored narration if it still matches the story's text, the story's fingerprint)."""
+    digest = fingerprint(post.title or "", content)
+    row = db.query(StoryAudio).filter(StoryAudio.post_id == post.id).first()
+    return (row if row and row.content_hash == digest else None), digest
+
+
 @router.get("/status")
-def audio_status():
-    """Whether the server can narrate right now, so the page picks its voice before the tap."""
-    return {"enabled": is_available()}
+def audio_status(post_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """What the page needs before the tap, to pick its voice without a wasted round trip.
+
+    ``enabled``: a new narration can be made right now. ``ready``: this story's narration already
+    exists (and keeps playing even on a day the free allowance is used up).
+    """
+    ready = False
+    if post_id is not None:
+        post = db.query(Post).filter(Post.id == post_id, Post.published == 1).first()
+        if post and (post.content or "").strip():
+            ready = _current_row(db, post, post.content)[0] is not None
+    return {"enabled": is_available(), "ready": ready}
 
 
 @router.get("/post/{post_id}")
@@ -152,24 +192,9 @@ def get_story_audio(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    if not is_available():
-        raise HTTPException(status_code=503, detail="सर्वर की आवाज़ अभी उपलब्ध नहीं है")
-
-    post = db.query(Post).filter(Post.id == post_id, Post.published == 1).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="रचना नहीं मिली")
-    content = post.content or ""
-    if not content.strip():
-        raise HTTPException(status_code=404, detail="सुनाने के लिए कुछ नहीं है")
-    # Same rule as reading: a signed-out visitor only gets the short, ungated stories.
-    if current_user is None and len(content) > PREVIEW_LIMIT:
-        raise HTTPException(status_code=401, detail="पूरी रचना सुनने के लिए साइन इन करें")
-    if len(content) > settings.TTS_MAX_STORY_CHARS:
-        raise HTTPException(status_code=413, detail="यह रचना सर्वर की आवाज़ के लिए बहुत लंबी है")
-
-    digest = fingerprint(post.title or "", content)
-    row = db.query(StoryAudio).filter(StoryAudio.post_id == post_id).first()
-    if row and row.content_hash == digest:
+    post, content = _open_story(post_id, db, current_user)
+    row, digest = _current_row(db, post, content)
+    if row:
         return _audio_response(row.audio, digest, request)
 
     with _jobs_lock:
@@ -184,6 +209,8 @@ def get_story_audio(
             return JSONResponse(_working(job), status_code=202)
 
         # Nobody is making this story's audio yet: start it, if the allowances permit.
+        if not is_available():
+            raise HTTPException(status_code=503, detail="सर्वर की आवाज़ अभी उपलब्ध नहीं है")
         key = f"tts:{current_user.id}" if current_user else f"tts-ip:{client_ip(request)}"
         enforce(actions, key, GENERATIONS_PER_HOUR, 3600, record=True)
         # Quotes are read as separate pieces, so the story's own length is close to what is sent.
@@ -197,3 +224,30 @@ def get_story_audio(
         threading.Thread(target=_run, args=(post_id, digest, post.title or "", content), daemon=True).start()
         return JSONResponse(_working(job), status_code=202)
 
+
+@router.get("/timings/{post_id}")
+def get_story_timings(
+    post_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    """When each word of the story's narration is spoken, for the highlight that follows along.
+
+    Narrations made before timings were kept get an estimate from the text and the audio's length
+    (the MP3 is constant 48 kbps, so its size tells its duration).
+    """
+    post, content = _open_story(post_id, db, current_user)
+    row, _ = _current_row(db, post, content)
+    if not row:
+        raise HTTPException(status_code=404, detail="इस रचना की आवाज़ अभी बनी नहीं है")
+    data = None
+    if row.timings:
+        try:
+            data = json.loads(row.timings)
+        except ValueError:
+            data = None
+    if data is None:
+        data = timing.estimate_timings(post.title or "", scan(content), len(row.audio) * 8 / 48000)
+    if data is None:
+        raise HTTPException(status_code=404, detail="समय की जानकारी उपलब्ध नहीं है")
+    return JSONResponse(data, headers={"Cache-Control": "private, max-age=3600"})

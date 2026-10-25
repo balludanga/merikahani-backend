@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import lameenc
 import requests
 
+from app.core import timing
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -273,25 +274,41 @@ def synthesize(
     dialogue_style: str,
     progress: Optional[Callable[[int, int], None]] = None,
     cache: Optional[Dict[int, bytes]] = None,
+    title_words: int = 0,
+    timings_out: Optional[dict] = None,
 ) -> bytes:
     """The whole story as one MP3. Each window is read by its voice(s), with its silence before it.
 
     ``cache`` keeps the audio of finished windows: if the allowance runs out half way, the retry
     (a later day, another model) reads only what is left instead of paying for it all again.
-    ``progress(done, total)`` is called after each window.
+    ``progress(done, total)`` is called after each window. ``timings_out``, if given, is filled
+    with when each word is spoken (see ``app.core.timing``); ``title_words`` is how many of the
+    first words are the title.
     """
     pcm = bytearray()
     model: Optional[str] = None
+    units: list = []
+    times: list = []
+    at = 0.0  # seconds of audio so far
     for index, window in enumerate(windows):
         if window.pause:
             pcm.extend(silence(window.pause))
+            at += window.pause
         if cache is not None and index in cache:
             audio = cache[index]
         else:
             audio, model = synthesize_window(window, narration_style, dialogue_style, prefer=model)
             if cache is not None:
                 cache[index] = audio
+        if timings_out is not None:
+            start, end, gaps = timing.analyze_pcm(audio)
+            window_units = timing.units_for_window(window)
+            units.extend(window_units)
+            times.extend(at + t for t in timing.word_times(window_units, start, end, gaps))
         pcm.extend(audio)
+        at += len(audio) / 2 / SAMPLE_RATE
         if progress:
             progress(index + 1, len(windows))
+    if timings_out is not None:
+        timings_out.update(timing.build_timings(title_words, units, times, at))
     return pcm_to_mp3(bytes(pcm))
