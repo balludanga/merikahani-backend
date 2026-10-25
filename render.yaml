@@ -29,6 +29,12 @@ services:
       # dashboard, not here: this file is public. Empty means nobody can.
       - key: ADMIN_EMAILS
         sync: false
+      # Narration of stories in a natural Hindi voice (Azure AI Speech, free tier). Without the
+      # key the listen button simply uses the reader's own browser voice.
+      - key: AZURE_SPEECH_KEY
+        sync: false
+      - key: AZURE_SPEECH_REGION
+        value: centralindia
       - key: UPLOAD_BUCKET
         value: lekhani-media
       - key: FRONTEND_URL

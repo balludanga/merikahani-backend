@@ -26,6 +26,7 @@ class Post(Base):
     bookmarks = relationship("Bookmark", back_populates="post", cascade="all, delete-orphan")
     highlights = relationship("Highlight", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="post", cascade="all, delete-orphan")
+    audio = relationship("StoryAudio", cascade="all, delete-orphan", uselist=False)
     tags = relationship("Tag", secondary="post_tags", back_populates="posts", lazy="selectin")
 
     @property

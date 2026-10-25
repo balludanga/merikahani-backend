@@ -39,6 +39,16 @@ class Settings(BaseSettings):
         None if os.getenv("INDEXNOW_ENABLED", "") == "" else os.getenv("INDEXNOW_ENABLED", "").lower() in ("1", "true")
     )
 
+    # Server-side narration (Azure AI Speech, free tier F0: 500,000 characters a month).
+    # Empty key means the feature is off and the reader's browser voice is used instead.
+    AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY", "")
+    AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "centralindia")
+    TTS_VOICE: str = os.getenv("TTS_VOICE", "hi-IN-SwaraNeural")
+    # Stop before the free quota is used up; the rest of the month falls back to browser voices.
+    TTS_MONTHLY_CHARS: int = int(os.getenv("TTS_MONTHLY_CHARS", "450000"))
+    # A single story longer than this is not narrated on the server (it would eat the quota).
+    TTS_MAX_STORY_CHARS: int = int(os.getenv("TTS_MAX_STORY_CHARS", "15000"))
+
     # Who may open the owner's status page: comma-separated emails. Only an account whose
     # address Google has verified counts, and an empty list means nobody can.
     ADMIN_EMAILS: str = os.getenv("ADMIN_EMAILS", "")

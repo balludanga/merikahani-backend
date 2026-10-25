@@ -8,6 +8,7 @@ from app.models.highlight import Highlight
 from app.models.notification import Notification
 from app.models.user_media import UserMedia
 from app.models.server_error import ServerError
+from app.models.story_audio import StoryAudio, TtsUsage
 from app.models.tag import Tag, post_tags
 
-__all__ = ["User", "Post", "Comment", "Clap", "Follow", "Bookmark", "Highlight", "Notification", "UserMedia", "ServerError", "Tag", "post_tags"]
+__all__ = ["User", "Post", "Comment", "Clap", "Follow", "Bookmark", "Highlight", "Notification", "UserMedia", "ServerError", "StoryAudio", "TtsUsage", "Tag", "post_tags"]
