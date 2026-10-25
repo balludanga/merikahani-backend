@@ -91,7 +91,9 @@ def test_the_whole_story_gets_an_estimate_from_its_length_alone():
     result = timing.estimate_timings("शीर्षक यहाँ", paragraphs, 20.0)
     assert result["title"] == 2 and result["d"] == 20.0
     assert result["w"][:3] == ["शीर्षक", "यहाँ", "पहली"]
-    assert result["t"] == sorted(result["t"]) and result["t"][0] == 0.0 and result["t"][-1] < 20.0
+    assert result["t"] == sorted(result["t"])
+    assert abs(result["t"][0] - (timing.ESTIMATE_LEAD + timing.MP3_DELAY)) < 0.01  # after the opening silence
+    assert result["t"][-1] < 20.0 - timing.ESTIMATE_TRAIL
     assert timing.estimate_timings("", [], 20.0) is None and timing.estimate_timings("x", paragraphs, 0) is None
 
 
@@ -108,6 +110,7 @@ def test_a_story_in_two_requests_has_continuous_timings_that_include_the_silence
     assert out["title"] == 2 and len(out["w"]) == 10 and out["t"] == sorted(out["t"])
     one = 0.2 + 5 * FAST + 0.2  # seconds of the first request's audio
     second_starts = one + 0.7 + 0.1  # then the inserted silence, then that request's own lead-in
-    assert abs(out["t"][0] - 0.2) < 0.04
-    assert abs(out["t"][5] - second_starts) < 0.06
-    assert abs(out["d"] - (one + 0.7 + 0.1 + 5 * SLOW + 0.3)) < 0.01
+    delay = timing.MP3_DELAY  # the player starts the sound a little late; the times say when it is heard
+    assert abs(out["t"][0] - (0.2 + delay)) < 0.04
+    assert abs(out["t"][5] - (second_starts + delay)) < 0.06
+    assert abs(out["d"] - (one + 0.7 + 0.1 + 5 * SLOW + 0.3 + delay)) < 0.01
