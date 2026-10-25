@@ -533,6 +533,17 @@ class TestGeminiClient:
             speech.synthesize(windows, "n", "d", None, cache)
             assert post.call_count == before  # nothing was read again
 
+    def test_a_stuck_text_model_is_given_up_on_quickly(self):
+        import requests as real_requests
+
+        good = {"candidates": [{"content": {"parts": [{"text": '{"ok": 1}'}]}}]}
+        with patch.object(settings, "GEMINI_API_KEY", "k"), patch(
+            "app.core.speech.requests.post", side_effect=[real_requests.Timeout(), _reply(body=good)]
+        ) as post:
+            assert speech.generate_json("p", {"type": "OBJECT"}) == {"ok": 1}
+        assert all(c[1]["timeout"] == speech.CAST_TIMEOUT for c in post.call_args_list)
+        assert speech.CAST_TIMEOUT < speech.REQUEST_TIMEOUT
+
     def test_the_text_model_is_asked_in_turn_and_a_busy_one_does_not_pause_the_voice(self):
         good = {"candidates": [{"content": {"parts": [{"text": '{"ok": 1}'}]}}]}
         replies = [_reply(status=503), _reply(body=good)]
