@@ -15,7 +15,7 @@ from typing import Callable, List
 from app.core.config import settings
 
 # Bumped whenever the preparation or the style instructions change, so cached audio is remade.
-NARRATION_VERSION = "g3"
+NARRATION_VERSION = "g4"
 
 STYLE = (
     "Read this aloud in natural, native Hindi, as the author narrating their own story to a "

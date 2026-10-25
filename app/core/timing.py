@@ -24,8 +24,17 @@ FRAME = 480  # 20 ms of audio
 FRAME_SECONDS = FRAME / SAMPLE_RATE
 MIN_GAP = 0.15  # shortest stretch of near-silence taken for a pause between words
 
-# Pause room, in "letters" of speaking time, that punctuation leaves after a word.
-PAUSE_WEIGHT = {"": 0.0, "clause": 2.5, "sentence": 6.0, "turn": 6.0, "paragraph": 9.0}
+# Pause room, in "letters" of speaking time, that punctuation leaves after a word. Measured on a
+# real narration (about 11 letters a second): a full stop or a line break is roughly a second of
+# silence, a comma between a quarter and half a second.
+PAUSE_WEIGHT = {"": 0.0, "clause": 4.5, "sentence": 11.0, "turn": 7.0, "paragraph": 11.0}
+
+# The MP3 player starts the sound this much later than the audio we cut it from (the encoder's
+# delay: measured 46 ms in Chrome), so every word is spoken that much later than it was made.
+MP3_DELAY = 0.046
+# A Gemini narration begins and ends with a little silence (typically 0.3 s and 0.6 s).
+ESTIMATE_LEAD = 0.3
+ESTIMATE_TRAIL = 0.6
 _SENTENCE_END = re.compile(r"[।॥?!][”\"’)]*$|\.[”\"’)]*$")
 _CLAUSE_END = re.compile(r"[,;:—–…][”\"’)]*$")
 _LETTERS = re.compile(r"[ऀ-ॣ०-ॿ\w]")
@@ -192,13 +201,14 @@ def word_times(units: Sequence[Unit], start: float, end: float, gaps: Sequence[T
     return times
 
 
-def build_timings(title_words: int, units: Sequence[Unit], times: Sequence[float], duration: float) -> dict:
+def build_timings(title_words: int, units: Sequence[Unit], times: Sequence[float], duration: float, shift: float = MP3_DELAY) -> dict:
+    """The JSON the page uses: words, their start times (seconds into the played MP3), the length."""
     return {
         "v": 1,
         "title": title_words,
         "w": [w for w, _ in units],
-        "t": [round(t, 2) for t in times],
-        "d": round(duration, 2),
+        "t": [round(t + shift, 3) for t in times],
+        "d": round(duration + shift, 2),
     }
 
 
@@ -207,8 +217,10 @@ def estimate_timings(title: str, paragraphs, duration: float) -> Optional[dict]:
     units = units_for_story(title, paragraphs)
     if not units or duration <= 0:
         return None
-    times = word_times(units, 0.0, duration)
-    return build_timings(len(title.split()), units, times, duration)
+    # ``duration`` is the length of the played MP3, which already includes its delay.
+    start = ESTIMATE_LEAD + MP3_DELAY
+    end = max(start + 0.1, duration - ESTIMATE_TRAIL)
+    return build_timings(len(title.split()), units, word_times(units, start, end), duration, shift=0.0)
 
 
 def dumps(timings: dict) -> str:
