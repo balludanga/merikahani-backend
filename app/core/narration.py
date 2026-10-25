@@ -1,186 +1,211 @@
-"""Turn a story's plain text into SSML paced the way a writer reads their own work aloud.
+"""Prepare a story for the speech model: who says what, in pieces a voice can read.
 
-Same rules as the browser fallback (frontend ``planNarration`` in ``utils/ssmlTTS.js``): a
-breath at every comma, longer at a full stop, longer still between paragraphs and at a blank
-line or "* * *" divider; questions lift, ellipses trail off, quoted speech is set a touch
-higher and brisker than the narration, and each sentence gets a few percent of its own speed
-and pitch so the voice is not a metronome. The variation comes from a hash of the sentence,
-so the same story always produces the same audio (it is cached by that).
+A story is a title, paragraphs of narration, and quoted speech. ``scan`` finds the quotes (the
+code does this, never the language model, so the writer's words cannot be altered). ``casting``
+decides the narrator's gender and who speaks each quote; ``build_requests`` then turns the
+story into a list of requests, each read by one voice, with the silence to leave before it.
+Pacing, pauses inside a request and feeling are the speech model's job (see the style texts).
 """
 
+import hashlib
 import re
-from typing import Dict, List
-from xml.sax.saxutils import escape
+from dataclasses import dataclass
+from typing import Callable, List
 
-PAUSE = {
-    "clause": 170,
-    "sentence": 400,
-    "question": 460,
-    "trail": 620,
-    "paragraph": 750,
-    "section": 1300,
-    "title": 1000,
-}
+from app.core.config import settings
 
-# Bumped whenever the pacing changes, so cached audio is made again.
-NARRATION_VERSION = "1"
+# Bumped whenever the preparation or the style instructions change, so cached audio is remade.
+NARRATION_VERSION = "g3"
 
-BASE_RATE = 0.9
-BASE_PITCH = 1.0
+STYLE = (
+    "Read this aloud in natural, native Hindi, as the author narrating their own story to a "
+    "close friend: warm, unhurried and intimate. Let the pace and pitch follow the meaning. "
+    "Breathe briefly at commas, pause longer between paragraphs, lift gently for questions, "
+    "and slow down at tender or emotional moments. Never sound like a news reader or a voice "
+    "assistant."
+)
 
-_QUOTE_MARKS = re.compile(r"[“”\"‘’]")
-# A line with none of these ("* * *", "———") is a scene break, not speech.
-_HAS_WORDS = re.compile(r"[ऄ-ॣ०-ॿ\w]")
+DIALOGUE_STYLE = (
+    "Say this as a real person speaking in an ordinary conversation, in natural, native Hindi: "
+    "with the feeling the words carry (affection, worry, anger, teasing), at an everyday "
+    "speaking pace, not as narration. Never sound like a news reader or a voice assistant."
+)
+
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
-_SENTENCES = re.compile(r"(.+?(?:[।॥?!]+[”\"’]*|\.[”\"’]*(?=\s|$)|$))\s*")
-_CLAUSES = re.compile(r"[^,;:—–…“”\"‘’]+(?:[,;:—–…“”\"‘’]+|$)")
-_QUESTION_END = re.compile(r"[?？]\s*[”\"’]*\s*$")
-_EXCLAIM_END = re.compile(r"!\s*[”\"’]*\s*$")
-_TRAIL_END = re.compile(r"(…|\.{2,})\s*[”\"’]*\s*$")
+# A line with none of these ("* * *", "———") is a scene divider, not speech.
+_HAS_WORDS = re.compile(r"[ऄ-ॣ०-ॿ\w]")
+_QUOTE = re.compile(r"“([^”]*)”|\"([^\"\n]*)\"")
+_STRAY_QUOTES = re.compile(r"[“”\"]")
+_SENTENCE_END = re.compile(r"(?<=[।॥?!])\s+|(?<=\.)\s+")
 
-Segment = Dict[str, object]
-
-
-def _hash_of(text: str) -> int:
-    h = 0
-    for ch in text:
-        h = (h * 31 + ord(ch)) & 0x7FFFFFFF
-    return h
+# Silence (seconds) left before a request that begins a new paragraph, and before one that
+# continues the same paragraph (a line of dialogue after "उसने कहा").
+PARAGRAPH_PAUSE = 0.7
+TURN_PAUSE = 0.25
 
 
-def plan_narration(text: str, title: str = "") -> List[Segment]:
-    """Speech pieces ``{text, rate, pitch}`` and silences ``{pause: ms}``, in order."""
-    segments: List[Segment] = []
+@dataclass
+class Span:
+    kind: str  # "narration" or "quote"
+    text: str
+    q: int = 0  # 1, 2, 3... for quotes, in reading order
 
-    def pause(ms: int) -> None:
-        if not segments:
+
+@dataclass
+class Turn:
+    voice: str
+    dialogue: bool
+    text: str
+    starts_paragraph: bool = False
+
+
+@dataclass
+class Window:
+    """What one speech request reads: a run of turns by at most two voices."""
+
+    turns: List[Turn]
+    pause: float = 0.0  # silence before this window, in seconds
+
+    @property
+    def voices(self) -> List[str]:
+        return list(dict.fromkeys(t.voice for t in self.turns))
+
+    @property
+    def chars(self) -> int:
+        return sum(len(t.text) for t in self.turns)
+
+
+def scan(content: str) -> List[List[Span]]:
+    """The story as paragraphs of narration and numbered quotes."""
+    paragraphs: List[List[Span]] = []
+    counter = 0
+    for raw in _EMOJI.sub("", content or "").split("\n"):
+        line = re.sub(r"[^\S\n]+", " ", raw).strip()
+        if not line or not _HAS_WORDS.search(line):
+            continue
+        spans: List[Span] = []
+        pos = 0
+        for match in _QUOTE.finditer(line):
+            before = _STRAY_QUOTES.sub("", line[pos:match.start()]).strip()
+            if before and _HAS_WORDS.search(before):
+                spans.append(Span("narration", before))
+            inner = (match.group(1) if match.group(1) is not None else match.group(2)).strip()
+            if inner and _HAS_WORDS.search(inner):
+                counter += 1
+                spans.append(Span("quote", inner, counter))
+            pos = match.end()
+        rest = _STRAY_QUOTES.sub("", line[pos:]).strip()
+        if rest and _HAS_WORDS.search(rest):
+            spans.append(Span("narration", rest))
+        if spans:
+            paragraphs.append(spans)
+    return paragraphs
+
+
+def tagged_text(title: str, paragraphs: List[List[Span]]) -> str:
+    """The story with every quote numbered ``[Q1]“...”``, for the model that labels speakers."""
+    lines = [f"शीर्षक: {title}"] if title else []
+    for spans in paragraphs:
+        lines.append(" ".join(f"[Q{s.q}]“{s.text}”" if s.kind == "quote" else s.text for s in spans))
+    return "\n".join(lines)
+
+
+def _split_long(paragraph: str, limit: int) -> List[str]:
+    pieces: List[str] = []
+    current = ""
+    for sentence in _SENTENCE_END.split(paragraph):
+        while len(sentence) > limit:  # a sentence with no stop in sight: cut at a space
+            cut = sentence.rfind(" ", 0, limit)
+            cut = cut if cut > limit // 2 else limit
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.append(sentence[:cut].strip())
+            sentence = sentence[cut:].strip()
+        if current and len(current) + 1 + len(sentence) > limit:
+            pieces.append(current)
+            current = ""
+        current = f"{current} {sentence}".strip()
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def build_turns(
+    title: str,
+    paragraphs: List[List[Span]],
+    narrator_voice: str,
+    voice_for_quote: Callable[[int], str],
+    limit: int = 0,
+) -> List[Turn]:
+    """The story as turns in reading order. ``voice_for_quote(q)`` is who speaks quote number q.
+
+    Neighbouring pieces by the same voice in the same manner are joined, and a piece longer than
+    ``limit`` (a long monologue) is cut at sentence ends.
+    """
+    limit = limit or settings.TTS_CHUNK_CHARS
+    turns: List[Turn] = []
+    heading = _STRAY_QUOTES.sub("", _EMOJI.sub("", title or "")).strip()
+
+    def add(voice: str, dialogue: bool, text: str, new_paragraph: bool) -> None:
+        last = turns[-1] if turns else None
+        if last and last.voice == voice and last.dialogue == dialogue and len(last.text) + 2 + len(text) <= limit:
+            last.text += ("\n\n" if new_paragraph else " ") + text
             return
-        last = segments[-1]
-        if "pause" in last:
-            last["pause"] = max(int(last["pause"]), ms)
-        else:
-            segments.append({"pause": ms})
+        turns.append(Turn(voice, dialogue, text, new_paragraph))
 
-    def say(spoken: str, rate: float, pitch: float) -> None:
-        segments.append({"text": spoken, "rate": rate, "pitch": pitch})
-
-    heading = _QUOTE_MARKS.sub("", _EMOJI.sub("", title or "")).strip()
     if heading:
-        say(heading, BASE_RATE * 0.94, BASE_PITCH * 0.97)
-        pause(PAUSE["title"])
+        add(narrator_voice, False, heading, True)
+    for spans in paragraphs:
+        first = True
+        for span in spans:
+            voice = voice_for_quote(span.q) if span.kind == "quote" else narrator_voice
+            add(voice, span.kind == "quote", span.text, first)
+            first = False
 
-    in_quote = False
-    blank_lines = 0
-
-    for raw in _EMOJI.sub("", text or "").split("\n"):
-        line = raw.strip()
-        if not line:
-            blank_lines += 1
+    result: List[Turn] = []
+    for turn in turns:
+        if len(turn.text) <= limit:
+            result.append(turn)
             continue
-        if not _HAS_WORDS.search(line):
-            pause(PAUSE["section"])
-            blank_lines = 0
-            continue
-        pause(PAUSE["section"] if blank_lines else PAUSE["paragraph"])
-        blank_lines = 0
-
-        for sentence in _SENTENCES.findall(line):
-            clauses = _CLAUSES.findall(sentence) or [sentence]
-            parts: List[str] = []
-            buffer = ""
-            for clause in clauses:
-                buffer += clause
-                # Never merge across a quote mark: dialogue keeps its own voice.
-                if len(buffer.strip()) >= 14 or clause.rstrip()[-1:] in "“”\"‘’":
-                    parts.append(buffer)
-                    buffer = ""
-            if buffer.strip():
-                if parts:
-                    parts[-1] += buffer
-                else:
-                    parts.append(buffer)
-
-            for index, part in enumerate(parts):
-                is_last = index == len(parts) - 1
-                starts_in_quote = in_quote or bool(re.match(r"\s*[“\"‘]", part))
-                for ch in part:
-                    if ch in "“‘":
-                        in_quote = True
-                    elif ch in "”’":
-                        in_quote = False
-                    elif ch == '"':
-                        in_quote = not in_quote
-
-                spoken = _QUOTE_MARKS.sub("", part).strip()
-                if not spoken or not _HAS_WORDS.search(spoken):
-                    continue
-
-                ending = "clause"
-                if _TRAIL_END.search(part):
-                    ending = "trail"
-                elif is_last:
-                    if _QUESTION_END.search(part):
-                        ending = "question"
-                    elif _EXCLAIM_END.search(part):
-                        ending = "exclaim"
-                    else:
-                        ending = "sentence"
-
-                h = _hash_of(spoken)
-                rate = BASE_RATE * (1 + ((h % 7) - 3) / 100)
-                pitch = BASE_PITCH * (1 + (((h >> 3) % 5) - 2) / 100)
-                if starts_in_quote:
-                    pitch *= 1.05
-                    rate *= 1.03
-                if ending == "question":
-                    pitch *= 1.05
-                elif ending == "exclaim":
-                    pitch *= 1.04
-                elif ending == "trail":
-                    rate *= 0.92
-
-                say(spoken, rate, pitch)
-                pause(PAUSE["question" if ending == "exclaim" else ending])
-
-    while segments and "pause" in segments[-1]:
-        segments.pop()
-    return segments
+        for index, piece in enumerate(_split_long(turn.text.replace("\n\n", " "), limit)):
+            result.append(Turn(turn.voice, turn.dialogue, piece, turn.starts_paragraph and index == 0))
+    return result
 
 
-def spoken_length(segments: List[Segment]) -> int:
-    return sum(len(str(s["text"])) for s in segments if "text" in s)
+def build_windows(turns: List[Turn], limit: int = 0, max_voices: int = 2) -> List[Window]:
+    """Group turns into requests of at most ``max_voices`` voices and ``limit`` characters.
+
+    Google reads two voices in one request, so a conversation costs one request, not one per line;
+    the free tier allows only a handful of speech requests a day, so this matters.
+    """
+    limit = limit or settings.TTS_WINDOW_CHARS
+    windows: List[Window] = []
+    current: List[Turn] = []
+    chars = 0
+    for turn in turns:
+        voices = list(dict.fromkeys([t.voice for t in current] + [turn.voice]))
+        if current and (len(voices) > max_voices or chars + len(turn.text) > limit):
+            windows.append(Window(current))
+            current, chars = [], 0
+        current.append(turn)
+        chars += len(turn.text)
+    if current:
+        windows.append(Window(current))
+    for window in windows[1:]:
+        window.pause = PARAGRAPH_PAUSE if window.turns[0].starts_paragraph else TURN_PAUSE
+    return windows
 
 
-def _percent(factor: float) -> str:
-    return f"{round((factor - 1) * 100):+d}%"
+def fingerprint(title: str, content: str) -> str:
+    """Identifies this exact audio: same text, models, voice pools and reading styles."""
+    parts = [
+        NARRATION_VERSION, settings.TTS_MODELS, settings.CAST_MODELS,
+        settings.TTS_FEMALE_VOICES, settings.TTS_MALE_VOICES, STYLE, DIALOGUE_STYLE,
+        title or "", content or "",
+    ]
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
-def to_ssml_chunks(segments: List[Segment], voice: str, max_chars: int = 2500) -> List[str]:
-    """SSML documents of at most ``max_chars`` spoken characters each (one request apiece)."""
-    chunks: List[str] = []
-    body: List[str] = []
-    size = 0
-
-    def flush() -> None:
-        nonlocal body, size
-        if body:
-            chunks.append(
-                '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="hi-IN">'
-                f'<voice name="{escape(voice)}">{"".join(body)}</voice></speak>'
-            )
-        body, size = [], 0
-
-    for segment in segments:
-        if "pause" in segment:
-            body.append(f'<break time="{int(segment["pause"])}ms"/>')
-            continue
-        spoken = str(segment["text"])
-        if size and size + len(spoken) > max_chars:
-            flush()
-        body.append(
-            f'<prosody rate="{_percent(float(segment["rate"]))}" '
-            f'pitch="{_percent(float(segment["pitch"]))}">{escape(spoken)}</prosody>'
-        )
-        size += len(spoken)
-    flush()
-    return chunks
+def spoken_chars(windows: List[Window]) -> int:
+    return sum(w.chars for w in windows)
