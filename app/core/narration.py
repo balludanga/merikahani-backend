@@ -197,12 +197,21 @@ def build_windows(turns: List[Turn], limit: int = 0, max_voices: int = 2) -> Lis
     return windows
 
 
+# What the first narrations were made with. These are frozen on purpose: they are part of the cache key,
+# and the free speech allowance is only a few narrations a day, so changing a fallback model, the cast
+# models or the voice pools must NOT make every saved narration be paid for again. They only choose what
+# NEW narrations use. To remake saved narrations on purpose, bump NARRATION_VERSION.
+_STORED_TTS_MODELS = "gemini-3.8-flash-tts,gemini-3.8-flash-lite-tts,gemini-3.1-flash-tts-preview"
+_STORED_CAST_MODELS = "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash"
+_STORED_FEMALE_VOICES = "hi-in-storyteller-2,hi-in-storyteller-6,hi-in-podcaster-9,hi-in-assistant-12"
+_STORED_MALE_VOICES = "hi-in-storyteller-1,hi-in-storyteller-5,hi-in-podcaster-8,hi-in-assistant-1"
+
+
 def fingerprint(title: str, content: str) -> str:
-    """Identifies this exact audio: same text, models, voice pools and reading styles."""
+    """Identifies this exact audio: the story's text, the reading style, and the narration version."""
     parts = [
-        NARRATION_VERSION, settings.TTS_MODELS, settings.CAST_MODELS,
-        settings.TTS_FEMALE_VOICES, settings.TTS_MALE_VOICES, STYLE, DIALOGUE_STYLE,
-        title or "", content or "",
+        NARRATION_VERSION, _STORED_TTS_MODELS, _STORED_CAST_MODELS, _STORED_FEMALE_VOICES, _STORED_MALE_VOICES,
+        STYLE, DIALOGUE_STYLE, title or "", content or "",
     ]
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 

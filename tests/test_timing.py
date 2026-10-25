@@ -22,7 +22,7 @@ def pcm(parts):
 
 
 WORD = "अबकद"  # four letters: every word weighs the same, so only the audio can tell speeds apart
-FAST, SLOW, GAP = 0.15, 0.45, 0.5
+FAST, SLOW, GAP = 0.2, 0.4, 0.5  # a real voice varies about 1.5x; 2x is a stiff test
 TEXT = f"{' '.join([WORD] * 4)} {WORD}। {' '.join([WORD] * 4)} {WORD}।"  # two sentences of five words
 UNITS = timing.units_from_text(TEXT)
 # True start of each word: five fast words, a pause, five slow words.
@@ -114,3 +114,48 @@ def test_a_story_in_two_requests_has_continuous_timings_that_include_the_silence
     assert abs(out["t"][0] - (0.2 + delay)) < 0.04
     assert abs(out["t"][5] - (second_starts + delay)) < 0.06
     assert abs(out["d"] - (one + 0.7 + 0.1 + 5 * SLOW + 0.3 + delay)) < 0.01
+
+
+# --- real narrations ------------------------------------------------------------------------------
+# tests/fixtures/real_timing_cases.json holds, for seven real Gemini narrations (poem, prose with
+# dashes and quotes, a dialogue read by three requests, and voices that pause in unusual places), the
+# pauses found in the audio and when each word was truly spoken (found by forced alignment, an
+# independent method). Before the words were assigned to stretches of speech by dynamic programming,
+# a quarter of the words were more than 0.3 s out, and some by 2 s.
+import json as _json
+import os as _os
+import statistics as _statistics
+
+_REAL = _json.load(open(_os.path.join(_os.path.dirname(__file__), "fixtures", "real_timing_cases.json"), encoding="utf-8"))
+
+
+def _errors(case):
+    times = timing.word_times([tuple(u) for u in case["units"]], case["start"], case["end"], [tuple(g) for g in case["gaps"]])
+    return [times[i] - true for i, true in case["truth"]]
+
+
+def test_real_narrations_are_timed_within_a_third_of_a_second_for_nearly_every_word():
+    total = close = 0
+    for name, case in _REAL.items():
+        errors = _errors(case)
+        ordered = sorted(abs(e) for e in errors)
+        assert _statistics.median(ordered) < 0.12, name  # the typical word is within a tenth of a second
+        assert ordered[int(0.9 * (len(ordered) - 1))] < 0.7, name  # and nine in ten within 0.7 s, even in the worst story
+        total += len(errors)
+        close += sum(abs(e) <= 0.3 for e in errors)
+    assert close / total >= 0.90  # measured 93%
+
+
+def test_the_words_of_a_real_narration_come_out_in_order():
+    for case in _REAL.values():
+        times = timing.word_times([tuple(u) for u in case["units"]], case["start"], case["end"], [tuple(g) for g in case["gaps"]])
+        assert times == sorted(times)
+        assert case["start"] - 0.01 <= times[0] and times[-1] <= case["end"] + 0.01
+
+
+def test_a_pause_in_the_middle_of_a_word_made_of_two_parts_can_be_a_boundary():
+    # "थीं—राघव" is one token but a pause falls at the dash; and an apostrophe between two letters works the same
+    from app.core.timing import _pieces
+
+    assert [p[0] for p in _pieces([("थीं—राघव", ""), ("है'गरुड़", "sentence"), ("“क्या", ""), ("हो?”", "")])] == [0, 0, 1, 1, 2, 3]
+    assert [p[2] for p in _pieces([("थीं—राघव", "sentence")])] == ["clause", "sentence"]

@@ -23,6 +23,7 @@ SAMPLE_RATE = 24000
 FRAME = 480  # 20 ms of audio
 FRAME_SECONDS = FRAME / SAMPLE_RATE
 MIN_GAP = 0.15  # shortest stretch of near-silence taken for a pause between words
+MAX_BLIP = 0.14  # a sound shorter than this between two silences (a click, a breath) does not split a pause
 
 # Pause room, in "letters" of speaking time, that punctuation leaves after a word. Measured on a
 # real narration (about 11 letters a second): a full stop or a line break is roughly a second of
@@ -116,88 +117,165 @@ def analyze_pcm(pcm: bytes) -> Tuple[float, float, List[Tuple[float, float]]]:
             j = i
             while j <= last and quiet[j]:
                 j += 1
-            if (j - i) * FRAME_SECONDS >= MIN_GAP:
-                gaps.append((i * FRAME_SECONDS, j * FRAME_SECONDS))
+            if (j - i) * FRAME_SECONDS >= MIN_GAP or (gaps and (i * FRAME_SECONDS - gaps[-1][1]) < MAX_BLIP):
+                # a pause, or a short quiet right after another (a click or breath inside one pause)
+                if gaps and (i * FRAME_SECONDS - gaps[-1][1]) < MAX_BLIP:
+                    gaps[-1] = (gaps[-1][0], j * FRAME_SECONDS)
+                else:
+                    gaps.append((i * FRAME_SECONDS, j * FRAME_SECONDS))
             i = j
         else:
             i += 1
     return start, end, gaps
 
 
-def _baseline(units: Sequence[Unit], start: float, end: float) -> Tuple[List[float], List[float]]:
-    """(start time of each word, end time of each word) spreading [start, end] by length and pause room."""
-    total = sum(_weight(w) + PAUSE_WEIGHT[k] for i, (w, k) in enumerate(units) if i < len(units) - 1)
-    total += _weight(units[-1][0])
-    scale = (end - start) / total if total else 0.0
-    starts, ends, at = [], [], start
-    for i, (word, kind) in enumerate(units):
-        starts.append(at)
-        at += _weight(word) * scale
-        ends.append(at)
-        if i < len(units) - 1:
-            at += PAUSE_WEIGHT[kind] * scale
-    return starts, ends
+# Costs for the assignment of words to the stretches of speech between the real pauses.
+# A pause the punctuation did not predict is normal (a speaker also breathes at phrase breaks);
+# a full stop with no pause at all is not.
+BOUNDARY_COST = {"sentence": 0.0, "paragraph": 0.0, "turn": 0.0, "clause": 0.3, "": 1.0}
+# How long the silence after a word of each kind typically is (seconds), measured on real narrations:
+# a full stop or line break ~0.9 s, a comma ~0.55 s, a pause with no punctuation ~0.35 s. A silence of the
+# wrong length for the word it would follow is a poor boundary.
+EXPECTED_PAUSE = {"sentence": 0.9, "paragraph": 1.0, "turn": 0.6, "clause": 0.55, "": 0.35}
+PAUSE_SPREAD = 0.4
+PAUSE_LENGTH_WEIGHT = 1.0
 
 
-def _match_pauses(expected: List[float], found: List[Tuple[float, float]], tolerance: float) -> List[Tuple[int, int]]:
-    """Pair expected pauses (by predicted time) with real ones, in order, as a cheapest alignment."""
-    skip = 0.6
-    n, m = len(expected), len(found)
-    centres = [(a + b) / 2 for a, b in found]
-    cost = [[0.0] * (m + 1) for _ in range(n + 1)]
-    back = [[None] * (m + 1) for _ in range(n + 1)]
-    for i in range(1, n + 1):
-        cost[i][0], back[i][0] = i * skip, "e"
+def boundary_cost(kind: str, length: float) -> float:
+    off = (length - EXPECTED_PAUSE[kind]) / PAUSE_SPREAD
+    return BOUNDARY_COST[kind] + PAUSE_LENGTH_WEIGHT * min(off * off, 6.0)
+
+MISSING_COST = {"sentence": 2.5, "paragraph": 2.5, "turn": 1.5, "clause": 0.8, "": 0.0}
+# The price of ignoring a real pause that is not between two words.
+UNUSED_GAP_COST = 2.0
+
+
+MAX_UNUSED_GAPS = 5
+_L = r"[\u0900-\u0963\u0966-\u097F\w]"
+_SPLIT = re.compile(r"(?<=" + _L + r"[—–'’‘\"“”])(?=" + _L + r")")
+
+
+def _pieces(units: Sequence[Unit]) -> List[Tuple[int, float, str]]:
+    """(word index, letters, pause kind after it), a word split at a dash so a pause there can be a boundary."""
+    pieces: List[Tuple[int, float, str]] = []
+    for index, (word, kind) in enumerate(units):
+        parts = [p for p in _SPLIT.split(word) if p]
+        if len(parts) <= 1:
+            pieces.append((index, _weight(word), kind))
+            continue
+        for number, part in enumerate(parts):
+            pieces.append((index, _weight(part), kind if number == len(parts) - 1 else "clause"))
+    return pieces
+
+
+def _spread(letters: Sequence[float], kinds: Sequence[str], start: float, end: float) -> List[float]:
+    """Start times of consecutive words spreading [start, end] by length, with room for the pauses between them."""
+    weights = [w + (PAUSE_WEIGHT[k] if i < len(letters) - 1 else 0.0) for i, (w, k) in enumerate(zip(letters, kinds))]
+    total = sum(weights)
+    if total <= 0:
+        return [start] * len(letters)
+    times, at = [], start
+    for weight in weights:
+        times.append(at)
+        at += (end - start) * weight / total
+    return times
+
+
+def _assign(letters: List[float], kinds: List[str], start: float, end: float, gaps: List[Tuple[float, float]]):
+    """Cut the words into stretches, one per real pause that falls between words.
+
+    Every real silence is a candidate boundary. The cheapest assignment is found by dynamic
+    programming: a stretch of words should last about as long as its letters take at the story's
+    speaking rate; boundaries should fall where punctuation expects a pause; a pause may be left
+    unused. Returns [(first word, last word, stretch start, stretch end)], or None if nothing fits.
+    """
+    n, m = len(letters), len(gaps)
+    cum = [0.0]
+    pause_room = [0.0]
+    missing = [0.0]
+    for letter, kind in zip(letters, kinds):
+        cum.append(cum[-1] + letter)
+        pause_room.append(pause_room[-1] + PAUSE_WEIGHT[kind])
+        missing.append(missing[-1] + MISSING_COST[kind])
+    speech = max(0.1, (end - start) - sum(b - a for a, b in gaps))
+    rate = cum[n] / speech  # letters a second while speaking
+    elapsed, taken = [0.0] * (m + 1), 0.0  # speech time before each pause
+    for j, (a, b) in enumerate(gaps, start=1):
+        elapsed[j] = (a - start) - taken
+        taken += b - a
+
+    skipped = [0.0]  # skipped[j]: the price of ignoring pauses 1..j
+    for a, b in gaps:
+        skipped.append(skipped[-1] + UNUSED_GAP_COST)
+
+    def stretch_from(j):  # where the stretch that follows pause j begins (j = 0: the start)
+        return start if j == 0 else gaps[j - 1][1]
+
+    def cost(first, last, t0, t1):
+        expected = (cum[last + 1] - cum[first] + pause_room[last] - pause_room[first]) / rate
+        sigma = 0.2 * expected + 0.3
+        return min(((t1 - t0 - expected) / sigma) ** 2, 30.0) + missing[last] - missing[first]
+
+    # words that could sit just before pause j: those whose proportional position is near it
+    near = [[]] + [
+        [i for i in range(n - 1) if abs(cum[i + 1] / rate - elapsed[j]) <= 2.5 + 0.12 * elapsed[j]] for j in range(1, m + 1)
+    ]
+    best = {(0, -1): (0.0, None)}
     for j in range(1, m + 1):
-        cost[0][j], back[0][j] = j * skip, "g"
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            best, how = cost[i - 1][j] + skip, "e"
-            if cost[i][j - 1] + skip < best:
-                best, how = cost[i][j - 1] + skip, "g"
-            distance = abs(expected[i - 1] - centres[j - 1])
-            if distance <= tolerance and cost[i - 1][j - 1] + distance < best:
-                best, how = cost[i - 1][j - 1] + distance, "m"
-            cost[i][j], back[i][j] = best, how
-    pairs, i, j = [], n, m
-    while i > 0 or j > 0:
-        how = back[i][j]
-        if how == "m":
-            pairs.append((i - 1, j - 1))
-            i, j = i - 1, j - 1
-        elif how == "e":
-            i -= 1
-        else:
-            j -= 1
-    return pairs[::-1]
+        for i in near[j]:
+            top = None
+            for jp in range(j - 1, max(-1, j - 2 - MAX_UNUSED_GAPS), -1):
+                previous = [-1] if jp == 0 else near[jp]
+                for ip in previous:
+                    if ip >= i or (jp, ip) not in best:
+                        continue
+                    c = (best[(jp, ip)][0] + cost(ip + 1, i, stretch_from(jp), gaps[j - 1][0])
+                         + boundary_cost(kinds[i], gaps[j - 1][1] - gaps[j - 1][0]) + skipped[j - 1] - skipped[jp])
+                    if top is None or c < top[0]:
+                        top = (c, (jp, ip))
+            if top:
+                best[(j, i)] = top
+    final = None
+    for jp in range(m, max(-1, m - 1 - MAX_UNUSED_GAPS), -1):
+        for ip in ([-1] if jp == 0 else near[jp]):
+            if (jp, ip) in best and ip < n - 1:
+                c = best[(jp, ip)][0] + cost(ip + 1, n - 1, stretch_from(jp), end) + skipped[m] - skipped[jp]
+                if final is None or c < final[0]:
+                    final = (c, (jp, ip))
+    if final is None:
+        return None
+    chain, key = [], final[1]
+    while key is not None:
+        chain.append(key)
+        key = best[key][1]
+    chain.reverse()  # (0, -1), then each used pause as (pause number, last word before it)
+    groups = []
+    for (jp, ip), (j, i) in zip(chain, chain[1:]):
+        groups.append((ip + 1, i, stretch_from(jp), gaps[j - 1][0]))
+    jp, ip = chain[-1]
+    groups.append((ip + 1, n - 1, stretch_from(jp), end))
+    return groups
 
 
 def word_times(units: Sequence[Unit], start: float, end: float, gaps: Sequence[Tuple[float, float]] = ()) -> List[float]:
     """Start time of every word, fitted to the real pauses in the audio where they can be found."""
     if not units:
         return []
-    starts, ends = _baseline(units, start, end)
-    if not gaps or len(units) < 2:
-        return starts
-
-    pause_at = [i for i, (_, kind) in enumerate(units[:-1]) if PAUSE_WEIGHT[kind] > 0]
-    tolerance = 1.0 + 0.12 * (end - start)
-    pairs = _match_pauses([ends[i] for i in pause_at], list(gaps), tolerance)
-    if not pairs:
-        return starts
-
-    # Cut the words into stretches at the matched pauses; each stretch gets exactly the time between them.
-    cuts = [(pause_at[e], gaps[g]) for e, g in pairs]
-    times = [0.0] * len(units)
-    first_word, stretch_start = 0, start
-    for word_index, (gap_start, gap_end) in cuts + [(len(units) - 1, (end, end))]:
-        last_word = word_index
-        stretch = units[first_word:last_word + 1]
-        # inside a stretch every unmatched pause still takes its room; the pause at its end is the real gap
-        inner = [(w, k if i < len(stretch) - 1 else "") for i, (w, k) in enumerate(stretch)]
-        inner_starts, _ = _baseline(inner, stretch_start, gap_start if word_index != len(units) - 1 else end)
-        times[first_word:last_word + 1] = inner_starts
-        first_word, stretch_start = last_word + 1, gap_end
+    pieces = _pieces(units)
+    letters = [p[1] for p in pieces]
+    kinds = [p[2] for p in pieces]
+    usable = [g for g in gaps if g[0] > start and g[1] < end]
+    groups = _assign(letters, kinds, start, end, usable) if usable and len(pieces) > 1 else None
+    if groups is None:
+        piece_times = _spread(letters, kinds, start, end)
+    else:
+        piece_times = [0.0] * len(pieces)
+        for first, last, t0, t1 in groups:
+            piece_times[first:last + 1] = _spread(letters[first:last + 1], kinds[first:last + 1], t0, t1)
+    times: List[float] = []
+    for piece, (word_index, _, _) in zip(piece_times, pieces):
+        if word_index == len(times):  # the first piece of a word gives the word's time
+            times.append(piece)
     return times
 
 
