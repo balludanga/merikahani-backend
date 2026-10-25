@@ -29,6 +29,9 @@ MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 VOICES_URL = "https://generativelanguage.googleapis.com/v1beta/voices"
 SAMPLE_RATE = 24000
 REQUEST_TIMEOUT = 120
+# Reading a story's cast is a small question; a model that has not answered in this long is stuck,
+# and the next one should be asked instead of waiting out the full request timeout.
+CAST_TIMEOUT = 25
 # How long to stand down after Google says the free quota is used up, so a busy day does
 # not turn every listener's tap into a failing request.
 QUOTA_COOLDOWN = 15 * 60
@@ -82,14 +85,14 @@ def reset_block() -> None:
         _model_blocked.clear()
 
 
-def _post(url: str, body: dict, attempts: int = 3) -> dict:
+def _post(url: str, body: dict, attempts: int = 3, timeout: float = 0) -> dict:
     """POST to Gemini; brief rate limits are waited out, a long one raises RateLimited."""
     if not is_configured():
         raise SpeechUnavailable("no key")
     headers = {"x-goog-api-key": settings.GEMINI_API_KEY, "Content-Type": "application/json"}
     for attempt in range(attempts):
         try:
-            response = requests.post(url, json=body, headers=headers, timeout=REQUEST_TIMEOUT)
+            response = requests.post(url, json=body, headers=headers, timeout=timeout or REQUEST_TIMEOUT)
         except requests.RequestException as exc:
             raise SpeechUnavailable(f"network: {type(exc).__name__}") from exc
 
@@ -240,7 +243,7 @@ def generate_json(prompt: str, schema: dict) -> Any:
     last: Optional[Exception] = None
     for model in [m.strip() for m in settings.CAST_MODELS.split(",") if m.strip()]:
         try:
-            answer = _post(f"{MODELS_URL}/{model}:generateContent", body, attempts=1)
+            answer = _post(f"{MODELS_URL}/{model}:generateContent", body, attempts=1, timeout=CAST_TIMEOUT)
             return json.loads(answer["candidates"][0]["content"]["parts"][0]["text"])
         except SpeechUnavailable as exc:
             last = exc
