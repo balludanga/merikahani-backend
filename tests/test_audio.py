@@ -291,6 +291,24 @@ DIALOGUE_STORY = """मैं रसोई में चाय बना रह�
 अंदर से माँ बोलीं, “मैं यहीं हूँ बेटा।”"""
 
 
+class TestSavedNarrationsSurviveConfigChanges:
+    def test_the_cache_key_is_the_one_the_first_narrations_were_stored_under(self):
+        # Pinned: if this changes, every saved narration is thrown away and has to be paid for again out of
+        # a free allowance of a few a day. Change narration.NARRATION_VERSION on purpose, not by accident.
+        assert narration.fingerprint("शीर्षक", "एक छोटी कहानी।") == "d48fdb91689597484fdc0fedf11c88cdb34a61dde1435571a74e477e84e42115"
+
+    def test_changing_models_or_voice_pools_does_not_remake_saved_narrations(self):
+        before = narration.fingerprint("शीर्षक", "एक छोटी कहानी।")
+        with patch.multiple(
+            settings, TTS_MODELS="other-model", CAST_MODELS="another", TTS_FEMALE_VOICES="f9", TTS_MALE_VOICES="m9"
+        ):
+            assert narration.fingerprint("शीर्षक", "एक छोटी कहानी।") == before
+
+    def test_but_the_text_does(self):
+        assert narration.fingerprint("शीर्षक", "एक छोटी कहानी।") != narration.fingerprint("शीर्षक", "एक छोटी कहानी!")
+        assert narration.fingerprint("शीर्षक", "एक") != narration.fingerprint("दूसरा", "एक")
+
+
 class TestScan:
     def test_quotes_are_numbered_in_reading_order_and_dividers_dropped(self):
         paragraphs = scan(DIALOGUE_STORY)

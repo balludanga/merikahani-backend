@@ -45,8 +45,11 @@ class Settings(BaseSettings):
     # PUBLISHED stories are ever sent.
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     # Speech models (comma-separated, in order of preference). The free tier allows only about 10
-    # requests a day PER MODEL, so when one is used up the next one takes over.
-    TTS_MODELS: str = os.getenv("TTS_MODELS", "gemini-3.8-flash-tts,gemini-3.8-flash-lite-tts,gemini-3.1-flash-tts-preview")
+    # requests a day PER MODEL, so when one is used up the next one takes over. (Not
+    # gemini-3.1-flash-tts-preview: it refuses the speech_metadata style/speaker annotations.)
+    TTS_MODELS: str = os.getenv("TTS_MODELS", "gemini-3.8-flash-tts,gemini-3.8-flash-lite-tts")
+    # (storyteller-5 and podcaster-8 were measured to be bursty - fast inside a sentence, then a 1.4 s
+    # stop at every full stop - and were left out of the male pool; add them back here if wanted.)
     # Voices to draw from (comma-separated): ids from Google's Indian Hindi voice library, or
     # prebuilt names such as "Sulafat". Each story gets a stable random pick that matches the
     # gender of its narrator and of each character who speaks.
@@ -54,7 +57,7 @@ class Settings(BaseSettings):
         "TTS_FEMALE_VOICES", "hi-in-storyteller-2,hi-in-storyteller-6,hi-in-podcaster-9,hi-in-assistant-12"
     )
     TTS_MALE_VOICES: str = os.getenv(
-        "TTS_MALE_VOICES", "hi-in-storyteller-1,hi-in-storyteller-5,hi-in-podcaster-8,hi-in-assistant-1"
+        "TTS_MALE_VOICES", "hi-in-storyteller-1,hi-in-assistant-1"
     )
     # Text models (comma-separated, tried in order) that read a story once to find the narrator's
     # gender and each speaker. Small "lite" models answer in seconds; the bigger ones think longer.
