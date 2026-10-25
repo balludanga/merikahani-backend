@@ -39,15 +39,34 @@ class Settings(BaseSettings):
         None if os.getenv("INDEXNOW_ENABLED", "") == "" else os.getenv("INDEXNOW_ENABLED", "").lower() in ("1", "true")
     )
 
-    # Server-side narration (Azure AI Speech, free tier F0: 500,000 characters a month).
-    # Empty key means the feature is off and the reader's browser voice is used instead.
-    AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY", "")
-    AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "centralindia")
-    TTS_VOICE: str = os.getenv("TTS_VOICE", "hi-IN-SwaraNeural")
-    # Stop before the free quota is used up; the rest of the month falls back to browser voices.
-    TTS_MONTHLY_CHARS: int = int(os.getenv("TTS_MONTHLY_CHARS", "450000"))
-    # A single story longer than this is not narrated on the server (it would eat the quota).
-    TTS_MAX_STORY_CHARS: int = int(os.getenv("TTS_MAX_STORY_CHARS", "15000"))
+    # Server-side narration: Google's Gemini speech model through a free Google AI Studio key
+    # (no card needed). Empty key means the feature is off and the reader's browser voice is
+    # used instead. Free-tier text may be used by Google to improve its products, so only
+    # PUBLISHED stories are ever sent.
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    # Speech models (comma-separated, in order of preference). The free tier allows only about 10
+    # requests a day PER MODEL, so when one is used up the next one takes over.
+    TTS_MODELS: str = os.getenv("TTS_MODELS", "gemini-3.8-flash-tts,gemini-3.8-flash-lite-tts,gemini-3.1-flash-tts-preview")
+    # Voices to draw from (comma-separated): ids from Google's Indian Hindi voice library, or
+    # prebuilt names such as "Sulafat". Each story gets a stable random pick that matches the
+    # gender of its narrator and of each character who speaks.
+    TTS_FEMALE_VOICES: str = os.getenv(
+        "TTS_FEMALE_VOICES", "hi-in-storyteller-2,hi-in-storyteller-6,hi-in-podcaster-9,hi-in-assistant-12"
+    )
+    TTS_MALE_VOICES: str = os.getenv(
+        "TTS_MALE_VOICES", "hi-in-storyteller-1,hi-in-storyteller-5,hi-in-podcaster-8,hi-in-assistant-1"
+    )
+    # Text models (comma-separated, tried in order) that read a story once to find the narrator's
+    # gender and each speaker. Small "lite" models answer in seconds; the bigger ones think longer.
+    CAST_MODELS: str = os.getenv("CAST_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash")
+    # Longest single turn (one voice's uninterrupted text) before it is cut at a sentence end, and
+    # the most characters one speech request reads (one request may hold two voices).
+    TTS_CHUNK_CHARS: int = int(os.getenv("TTS_CHUNK_CHARS", "1500"))
+    TTS_WINDOW_CHARS: int = int(os.getenv("TTS_WINDOW_CHARS", "3000"))
+    # Soft monthly cap on characters sent, a guard on top of Google's own free limits.
+    TTS_MONTHLY_CHARS: int = int(os.getenv("TTS_MONTHLY_CHARS", "300000"))
+    # A single story longer than this is not narrated on the server.
+    TTS_MAX_STORY_CHARS: int = int(os.getenv("TTS_MAX_STORY_CHARS", "12000"))
 
     # Who may open the owner's status page: comma-separated emails. Only an account whose
     # address Google has verified counts, and an empty list means nobody can.
