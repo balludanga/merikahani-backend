@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 
 from app.database import Base
 
@@ -20,6 +20,9 @@ class StoryAudio(Base):
     voice = Column(String(60), nullable=False)
     audio = Column(LargeBinary, nullable=False)
     chars = Column(Integer, nullable=False, default=0)
+    # When each word is spoken (JSON from app.core.timing), for the follow-along highlight.
+    # Narrations made before this existed have none and get an estimate.
+    timings = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

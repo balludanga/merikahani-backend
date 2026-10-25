@@ -41,8 +41,10 @@ def gemini_on():
     """Pretend a key is set; casting and speech are replaced by recorders. Yields the windows read."""
     calls = []
 
-    def fake(windows, style, dialogue_style, progress=None, cache=None):
+    def fake(windows, style, dialogue_style, progress=None, cache=None, title_words=0, timings_out=None):
         calls.append(windows)
+        if timings_out is not None:
+            timings_out.update({"v": 1, "title": title_words, "w": ["एक", "दो"], "t": [0.0, 0.5], "d": 1.0})
         if progress:
             for i in range(1, len(windows) + 1):
                 progress(i, len(windows))
@@ -76,12 +78,36 @@ def _listen(client, post_id, headers=None):
 
 
 def test_status_tells_the_page_whether_to_use_the_server_voice(test_client):
-    assert test_client.get("/api/audio/status").json() == {"enabled": False}
+    assert test_client.get("/api/audio/status").json() == {"enabled": False, "ready": False}
     with patch.object(settings, "GEMINI_API_KEY", "test-key"):
-        assert test_client.get("/api/audio/status").json() == {"enabled": True}
+        assert test_client.get("/api/audio/status").json() == {"enabled": True, "ready": False}
         for model in speech.tts_models():  # every speech model out of allowance for today
             speech._block_model(model, 3600)
-        assert test_client.get("/api/audio/status").json() == {"enabled": False}
+        assert test_client.get("/api/audio/status").json() == {"enabled": False, "ready": False}
+
+
+def test_a_story_that_already_has_audio_is_marked_ready_and_keeps_playing_when_the_allowance_is_gone(
+    test_client, writer_a, gemini_on
+):
+    post = _post(test_client, writer_a, SHORT + " पहले से बनी।", title="तैयार")
+    other = _post(test_client, writer_a, SHORT + " अभी नहीं बनी।", title="बाकी")
+    assert test_client.get(f"/api/audio/status?post_id={post['id']}").json()["ready"] is False
+    assert _listen(test_client, post["id"]).status_code == 200
+    for model in speech.tts_models():  # now the day's allowance is used up
+        speech._block_model(model, 3600)
+    status = test_client.get(f"/api/audio/status?post_id={post['id']}").json()
+    assert status == {"enabled": False, "ready": True}
+    assert test_client.get(f"/api/audio/post/{post['id']}").status_code == 200  # still played from the store
+    assert test_client.get(f"/api/audio/status?post_id={other['id']}").json() == {"enabled": False, "ready": False}
+    assert test_client.get(f"/api/audio/post/{other['id']}").status_code == 503  # a new one cannot be made
+
+
+def test_ready_goes_away_when_the_story_is_edited(test_client, writer_a, gemini_on):
+    post = _post(test_client, writer_a, SHORT + " बदलने वाली।", title="बदलेगी")
+    assert _listen(test_client, post["id"]).status_code == 200
+    assert test_client.get(f"/api/audio/status?post_id={post['id']}").json()["ready"] is True
+    test_client.put(f"/api/posts/{post['id']}", json={"content": SHORT + " कुछ और।"}, headers=writer_a["headers"])
+    assert test_client.get(f"/api/audio/status?post_id={post['id']}").json()["ready"] is False
 
 
 def test_off_without_a_key(test_client, writer_a):
@@ -156,7 +182,7 @@ def test_progress_is_reported_while_the_story_is_being_read(test_client, writer_
     post = _post(test_client, writer_a, SHORT, title="धीमी रचना")
     started, release = threading.Event(), threading.Event()
 
-    def slow(windows, style, dialogue_style, progress=None, cache=None):
+    def slow(windows, style, dialogue_style, progress=None, cache=None, title_words=0, timings_out=None):
         progress(1, 3)
         started.set()
         release.wait(5)
@@ -200,7 +226,7 @@ def test_a_story_cut_short_by_the_daily_allowance_resumes_without_paying_twice(t
         seen["plans"] += 1
         return [Window([Turn("v1", False, "पहला", True)]), Window([Turn("v1", False, "दूसरा", True)], 0.7)], None
 
-    def flaky(windows, style, dialogue_style, progress=None, cache=None):
+    def flaky(windows, style, dialogue_style, progress=None, cache=None, title_words=0, timings_out=None):
         if not seen["cache_at_retry"] and 0 not in cache:
             cache[0] = b"first-window-audio"  # window 1 got read ...
             raise RateLimited(3600)  # ... then the allowance ran out
@@ -223,6 +249,37 @@ def test_deleting_a_story_removes_its_audio(test_client, writer_a, gemini_on):
     assert test_client.delete(f"/api/posts/{post['id']}", headers=writer_a["headers"]).status_code in (200, 204)
     with SessionLocal() as db:
         assert db.query(StoryAudio).filter(StoryAudio.post_id == post["id"]).count() == 0
+
+
+def test_word_timings_come_with_the_narration(test_client, writer_a, gemini_on):
+    post = _post(test_client, writer_a, SHORT + " समय वाली।", title="समय")
+    assert test_client.get(f"/api/audio/timings/{post['id']}").status_code == 404  # nothing made yet
+    assert _listen(test_client, post["id"]).status_code == 200
+    got = test_client.get(f"/api/audio/timings/{post['id']}")
+    assert got.status_code == 200
+    assert got.json() == {"v": 1, "title": 1, "w": ["एक", "दो"], "t": [0.0, 0.5], "d": 1.0}
+    assert got.headers["cache-control"].startswith("private")
+
+
+def test_a_narration_made_before_timings_were_kept_gets_an_estimate(test_client, writer_a):
+    post = _post(test_client, writer_a, "पहली पंक्ति यहाँ है।\nदूसरी पंक्ति भी यहाँ है।", title="पुरानी रचना")
+    digest = narration.fingerprint("पुरानी रचना", "पहली पंक्ति यहाँ है।\nदूसरी पंक्ति भी यहाँ है।")
+    with SessionLocal() as db:
+        db.add(StoryAudio(post_id=post["id"], content_hash=digest, voice="v", audio=b"x" * 12000, chars=40))  # 2 s of 48 kbps
+        db.commit()
+    got = test_client.get(f"/api/audio/timings/{post['id']}").json()
+    assert got["d"] == 2.0 and got["title"] == 2
+    assert got["w"][:3] == ["पुरानी", "रचना", "पहली"]
+    assert got["t"] == sorted(got["t"]) and got["t"][-1] < 2.0
+
+
+def test_timings_follow_the_same_access_rules_as_the_audio(test_client, writer_a, writer_b, gemini_on):
+    long_post = _post(test_client, writer_a, LONG, title="लंबी समय वाली")
+    assert _listen(test_client, long_post["id"], headers=writer_b["headers"]).status_code == 200
+    assert test_client.get(f"/api/audio/timings/{long_post['id']}").status_code == 401  # signed out: gated
+    assert test_client.get(f"/api/audio/timings/{long_post['id']}", headers=writer_b["headers"]).status_code == 200
+    draft = _post(test_client, writer_a, SHORT, title="मसौदा समय", published=0)
+    assert test_client.get(f"/api/audio/timings/{draft['id']}", headers=writer_a["headers"]).status_code == 404
 
 
 # --- reading the story: quotes, turns, windows ----------------------------------------------
