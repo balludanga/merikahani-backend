@@ -1,5 +1,9 @@
 """Tests for the anonymous read gate (preview, then sign in to continue)."""
 
+from app.api.endpoints.posts import decorate_posts
+from app.database import SessionLocal
+from app.models.post import Post
+
 LONG_CONTENT = "यह एक लंबी रचना का नमूना अंश है। " * 80  # well past the preview limit
 
 
@@ -76,3 +80,31 @@ def test_short_post_readable_without_login(test_client, writer_a):
     body = response.json()
     assert body["is_preview"] is False
     assert body["content"] == "छोटी सी बात।"
+
+
+def test_gated_read_leaves_the_stored_story_intact(test_client, writer_a):
+    """Decorating for a signed-out reader must not rewrite the row.
+
+    The teaser used to be written onto the session-bound ORM instance. The request
+    then closed without committing, so nothing broke — until some later code in the
+    same request flushed it, quietly replacing the writer's story with its teaser.
+    """
+    post = _create_long_post(test_client, writer_a, "गेट से बची रचना")
+
+    db = SessionLocal()
+    try:
+        row = db.query(Post).filter(Post.id == post["id"]).first()
+        decorate_posts([row], None, db)  # what an anonymous request does to its rows
+        db.commit()  # and what anything else in that request might then do
+        db.expire_all()
+        assert db.query(Post).filter(Post.id == post["id"]).first().content == LONG_CONTENT
+    finally:
+        db.close()
+
+    # The teaser is still served, and the author still owns the whole story.
+    anon = test_client.get(f"/api/posts/{post['id']}")
+    assert anon.json()["is_preview"] is True
+    assert len(anon.json()["content"]) < len(LONG_CONTENT)
+
+    mine = test_client.get(f"/api/posts/{post['id']}", headers=writer_a["headers"])
+    assert mine.json()["content"] == LONG_CONTENT

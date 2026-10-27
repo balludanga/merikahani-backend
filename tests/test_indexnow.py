@@ -52,8 +52,11 @@ def test_publish_edit_unpublish_rename_and_delete_all_notify(test_client, writer
     test_client.put(f"/api/posts/{draft['id']}", json={"published": 1}, headers=h)          # went public
     assert indexnow.call_count == 1
     renamed = test_client.put(f"/api/posts/{draft['id']}", json={"title": f"नया नाम {uuid.uuid4().hex[:6]}"}, headers=h).json()
+    # A story that has gone live keeps the address it was shared under, so the rename
+    # announces that one address again rather than a new one plus a dead old one.
+    assert renamed["slug"] == draft["slug"]
     urls = _submitted(indexnow)[-1]["urlList"]
-    assert len(set(u for u in urls if "/post/" in u)) == 2  # new address and the old one (now a 404)
+    assert len(set(u for u in urls if "/post/" in u)) == 1
     test_client.put(f"/api/posts/{draft['id']}", json={"published": 0}, headers=h)          # went private
     assert indexnow.call_count == 3
     test_client.put(f"/api/posts/{draft['id']}", json={"content": "फिर भी निजी"}, headers=h)  # private edit: silent

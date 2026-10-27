@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, ForeignKey, UniqueConstraint, DateTime
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from app.core.clock import utcnow
 from app.database import Base
 
 
@@ -13,7 +13,7 @@ class Follow(Base):
     id = Column(Integer, primary_key=True, index=True)
     follower_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     following_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     follower = relationship("User", foreign_keys=[follower_id], back_populates="following")
     following_user = relationship("User", foreign_keys=[following_id], back_populates="followers")

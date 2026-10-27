@@ -1,4 +1,7 @@
+import json
 import uuid
+
+import pytest
 
 from app.core.sanitize import clean_html
 
@@ -314,6 +317,50 @@ def test_docs_hidden_when_not_debug():
     assert (app.docs_url is None) == (not settings.debug)
 
 
+def test_debug_fails_closed(monkeypatch):
+    """A deployment that forgot DEBUG must not come up in dev mode.
+
+    Debug mode publishes /docs, trusts the localhost CORS origins and allows the sample
+    secret, so the default has to be off rather than on.
+    """
+    import importlib.util
+
+    from app.core import config
+
+    def loaded_with(debug_value):
+        """Read the variable's default the way a booting process would, without touching
+        the module the app itself imported."""
+        if debug_value is None:
+            monkeypatch.delenv("DEBUG", raising=False)
+        else:
+            monkeypatch.setenv("DEBUG", debug_value)
+        # The default is decided once, at import: so run a fresh copy of the file.
+        spec = importlib.util.spec_from_file_location("config_under_test", config.__file__)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        # _env_file=None: the machine running this may keep DEBUG in its own backend/.env.
+        return module.Settings(_env_file=None).debug
+
+    assert loaded_with(None) is False
+    assert loaded_with("1") is True
+    assert loaded_with("true") is True
+    assert loaded_with("false") is False
+
+
+def test_production_refuses_the_placeholder_secret_key(monkeypatch):
+    # main reads the settings object it imported, so patch that one and not a reloaded twin.
+    from app.main import guard_production_secrets, settings
+
+    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(settings, "SECRET_KEY", "your-secret-key-here-change-in-production")
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        guard_production_secrets()
+
+    # Dev mode is the one place the sample key is fine.
+    monkeypatch.setattr(settings, "debug", True)
+    guard_production_secrets()
+
+
 def test_sanitizer_blocks_protocol_relative_links():
     html = clean_html('<p><a href="//evil.example">x</a> <a href="/\\evil.example">y</a> <a href="/about">ok</a></p>')
     assert "evil.example" not in html and 'href="/about"' in html
@@ -534,3 +581,94 @@ def test_popup_sign_in_rejects_unverified_email_and_mismatched_identity(test_cli
 def test_google_login_needs_exactly_one_token(test_client):
     assert test_client.post("/api/auth/google-login", json={}).status_code == 422
     assert test_client.post("/api/auth/google-login", json={"token": "a", "access_token": "b"}).status_code == 422
+
+
+def test_a_body_bigger_than_the_cap_is_refused_at_once(test_client, writer_a):
+    huge = b"x" * (7 * 1024 * 1024)
+    response = test_client.post("/api/posts", content=huge, headers=writer_a["headers"])
+    assert response.status_code == 413
+    assert response.json()["detail"] == "अनुरोध बहुत बड़ा है"
+
+
+def test_lying_about_content_length_is_still_stopped():
+    """The cap is measured on the bytes that actually arrive, not on what the caller declared."""
+    import asyncio
+
+    from app.main import BodyLimitMiddleware
+
+    sent = []
+
+    async def endpoint(scope, receive, send):
+        # What the endpoint is handed: the bytes up to the cap, then a stopped stream.
+        received = b""
+        while True:
+            message = await receive()
+            received += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+        assert received == b"x" * 40
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"5")]})
+        await send({"type": "http.response.body", "body": b"hello"})
+
+    async def drive():
+        chunks = [
+            {"type": "http.request", "body": b"x" * 40, "more_body": True},
+            {"type": "http.request", "body": b"x" * 40, "more_body": True},
+            {"type": "http.request", "body": b"x" * 40, "more_body": False},
+        ]
+
+        async def receive():
+            return chunks.pop(0) if chunks else {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await BodyLimitMiddleware(endpoint, limit=50)({"type": "http", "headers": []}, receive, send)
+
+    asyncio.run(drive())
+
+    start = next(message for message in sent if message["type"] == "http.response.start")
+    body = next(message for message in sent if message["type"] == "http.response.body")
+    assert start["status"] == 413
+    assert dict(start["headers"])[b"content-length"] == str(len(body["body"])).encode("ascii")
+    assert json.loads(body["body"])["detail"] == "अनुरोध बहुत बड़ा है"
+    assert b"hello" not in body["body"]
+
+
+def test_a_small_body_still_streams_through_the_cap():
+    import asyncio
+
+    from app.main import BodyLimitMiddleware
+
+    sent = []
+
+    async def endpoint(scope, receive, send):
+        received = b""
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                break
+            received += message.get("body", b"")
+            if not message.get("more_body", False):
+                break
+        assert received == b"ok"
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"2")]})
+        await send({"type": "http.response.body", "body": b"hi"})
+
+    async def drive():
+        chunks = [
+            {"type": "http.request", "body": b"o", "more_body": True},
+            {"type": "http.request", "body": b"k", "more_body": False},
+        ]
+
+        async def receive():
+            return chunks.pop(0) if chunks else {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await BodyLimitMiddleware(endpoint, limit=50)({"type": "http", "headers": []}, receive, send)
+
+    asyncio.run(drive())
+    assert [message["type"] for message in sent] == ["http.response.start", "http.response.body"]
+    assert sent[0]["status"] == 200

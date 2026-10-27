@@ -22,6 +22,9 @@ router = APIRouter()
 
 # Compressed editor uploads are ~100-300 KB; 2 MB is a generous ceiling.
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
+# The same ceiling measured on the base64 text, so an oversized body can be refused
+# before it is decoded (base64 grows every 3 bytes into 4 characters).
+MAX_ENCODED_CHARS = (MAX_IMAGE_BYTES + 2) // 3 * 4
 
 # mime -> file extension in the bucket
 ALLOWED_TYPES = {
@@ -44,6 +47,12 @@ def _decode(data: str, content_type: str) -> bytes:
         raw = data.split("base64,", 1)[1]
     else:
         raw = data
+    if len(raw) > MAX_ENCODED_CHARS:
+        # Rejected on length alone: no point decoding a payload that cannot fit.
+        raise HTTPException(
+            status_code=413,
+            detail="चित्र बहुत बड़ा है — पहले संपादक में उसे छोटा होने दें।",
+        )
     try:
         binary = base64.b64decode(raw, validate=True)
     except (binascii.Error, ValueError):
@@ -84,9 +93,10 @@ def upload_image(
             status_code=400,
             detail="सिर्फ़ JPEG, PNG, WebP या GIF चित्र ही जोड़े जा सकते हैं।",
         )
-    binary = _decode(payload.data, payload.content_type)
-    # Anyone can sign up, so cap how much one account can push into the bucket.
+    # Anyone can sign up, so cap how much one account can push into the bucket. Checked
+    # before the bytes are decoded, so a flooded account cannot make us do the work first.
     enforce(actions, f"upload:{db_user.id}", 30, 60 * 60, record=True)
+    binary = _decode(payload.data, payload.content_type)
 
     path = f"media/{db_user.id}/{uuid.uuid4().hex}.{ext}"
     base = settings.SUPABASE_URL.rstrip("/")

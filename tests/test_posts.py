@@ -123,3 +123,51 @@ def test_read_gate_hides_rich_body_from_anonymous(test_client, writer_a):
     assert mine.status_code == 200
     assert mine.json()["is_preview"] is False
     assert "<h2>शीर्षक</h2>" in mine.json()["content_html"]
+
+
+def test_published_story_keeps_its_address_when_renamed(test_client, writer_a):
+    post = _create_post(test_client, writer_a["headers"], "पहला शीर्षक")
+    assert post["slug"] == "पहला-शीर्षक"
+
+    renamed = test_client.put(
+        f"/api/posts/{post['id']}",
+        json={"title": "दूसरा शीर्षक"},
+        headers=writer_a["headers"],
+    )
+    assert renamed.status_code == 200, renamed.text
+    # The address it was shared, bookmarked and indexed under must keep working.
+    assert renamed.json()["slug"] == "पहला-शीर्षक"
+    assert test_client.get("/api/posts/slug/पहला-शीर्षक").status_code == 200
+
+
+def test_draft_rename_still_follows_its_title(test_client, writer_a):
+    # Nothing has ever linked a draft, so its address may still match its title.
+    post = _create_post(test_client, writer_a["headers"], "मसौदा शीर्षक", published=0)
+    renamed = test_client.put(
+        f"/api/posts/{post['id']}",
+        json={"title": "नया मसौदा"},
+        headers=writer_a["headers"],
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["slug"] == "नया-मसौदा"
+
+
+def test_endless_edit_stream_is_refused(test_client, writer_a):
+    """Autosave is chatty, so the limit sits far above a writer; a script still gets stopped."""
+    from unittest.mock import patch
+
+    post = _create_post(test_client, writer_a["headers"], "बार-बार संपादन", published=0)
+    with patch("app.api.endpoints.posts.POST_UPDATE_LIMIT", (2, 60 * 60)):
+        for _ in range(2):
+            ok = test_client.put(
+                f"/api/posts/{post['id']}",
+                json={"subtitle": "उपशीर्षक"},
+                headers=writer_a["headers"],
+            )
+            assert ok.status_code == 200, ok.text
+        blocked = test_client.put(
+            f"/api/posts/{post['id']}",
+            json={"subtitle": "उपशीर्षक"},
+            headers=writer_a["headers"],
+        )
+        assert blocked.status_code == 429

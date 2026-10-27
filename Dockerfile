@@ -27,5 +27,9 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Command to run the application with hot reload
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Run as the image ships: no --reload (that is a development watcher, and it keeps a second
+# process alive per container), and the port/process count come from the environment so a
+# Render-style host gets what it asked for. Concurrent workers migrating at once is safe:
+# app/migrations.py serialises startup behind a Postgres advisory lock.
+# docker-compose.yml overrides this command for local development.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]

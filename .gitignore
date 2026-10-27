@@ -58,7 +58,9 @@ logs/
 .coverage
 htmlcov/
 
-# Docker
-.dockerignore
+# Local tooling notes, not part of the app
 .qoder/
 AGENTS.md
+
+# .dockerignore is deliberately NOT ignored: it is part of the build recipe, because it
+# is what keeps .env and app.db out of an image built from a clone of this repo.

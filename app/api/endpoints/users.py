@@ -15,7 +15,7 @@ from app.models.follow import Follow
 from app.models.post import Post
 from app.models.user import User
 from app.models.user_media import UserMedia
-from app.schemas.profile import MAX_PINS, ProfileUpdate
+from app.schemas.profile import ProfileUpdate
 from app.schemas.user import UserProfileResponse
 
 router = APIRouter()

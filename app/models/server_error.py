@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.core.clock import utcnow
 
 from sqlalchemy import Column, DateTime, Integer, String
 
@@ -15,7 +15,7 @@ class ServerError(Base):
     __tablename__ = "server_errors"
 
     id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
     method = Column(String(10), nullable=False)
     path = Column(String(300), nullable=False)
     status = Column(Integer, nullable=False)

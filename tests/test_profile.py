@@ -1,5 +1,6 @@
 """Profile customisation: identity, links, accent, banner, photo, pins, badges."""
 import base64
+import warnings
 
 from tests.conftest import _register_and_login
 from tests.test_posts import _create_post
@@ -148,6 +149,25 @@ def test_badges_and_counts_come_from_real_numbers(test_client, writer_b):
     body = _profile(test_client, fresh, viewer=writer_b)
     assert body["claps_total"] == 3 and body["follower_count"] == 1 and body["is_following"] is True
     assert [b["key"] for b in body["badges"]] == ["stories-1"]  # 3 claps / 1 follower are below the first tiers
+
+
+def test_a_profile_read_warns_about_nothing(test_client, writer_b):
+    """Badges reach the response as Badge objects, not as dicts.
+
+    ``UserProfileResponse.badges`` is not re-validated when assigned, so plain dicts made
+    Pydantic print a serializer warning on every profile read - noise that hides the real
+    warnings, and a response built by a fallback path instead of the declared one.
+    """
+    writer = _register_and_login(test_client)
+    _create_post(test_client, writer["headers"], "चेतावनी नहीं वाली रचना")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        body = _profile(test_client, writer, viewer=writer_b)
+
+    assert [b["key"] for b in body["badges"]] == ["stories-1"]
+    noisy = [str(w.message) for w in caught if "serializer" in str(w.message)]
+    assert not noisy, noisy
 
 
 def test_the_accent_travels_with_the_author_but_nothing_private_does(test_client):

@@ -11,6 +11,10 @@ import pytest
 _TEST_DB_DIR = tempfile.mkdtemp(prefix="lekhani-tests-")
 atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(_TEST_DB_DIR, 'test.db')}"
+# Tests behave like a local dev box: debug on, so /docs exist, the localhost CORS origins are
+# trusted and IndexNow stays quiet. Debug now fails closed, so state it here rather than
+# relying on a default.
+os.environ.setdefault("DEBUG", "true")
 
 from fastapi.testclient import TestClient
 from app.main import app

@@ -6,7 +6,11 @@ class Settings(BaseSettings):
     app_name: str = "लेखनी"
     admin_email: str = "admin@example.com"
     items_per_page: int = 10
-    debug: bool = os.getenv("DEBUG", "true").lower() == "true"
+    # Fail closed. Debug mode publishes /docs and /openapi.json, trusts the localhost
+    # CORS origins and turns IndexNow off, so a deployment that simply forgot the
+    # variable must not land in it. Local runs, docker-compose and the tests set
+    # DEBUG=true explicitly.
+    debug: bool = os.getenv("DEBUG", "false").lower() in ("1", "true")
 
     # Database - defaults to SQLite for local, PostgreSQL for production
     DATABASE_URL: str = os.getenv(

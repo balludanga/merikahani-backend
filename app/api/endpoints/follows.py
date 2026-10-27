@@ -7,10 +7,15 @@ from app.models.user import User
 from app.models.follow import Follow
 from app.schemas.user import PublicUserResponse
 from app.core.dependencies import get_current_user
+from app.core.ratelimit import actions, enforce
 from app.core.notify import notify
 from app.models.notification import FOLLOW
 
 router = APIRouter()
+
+# A new account costs nothing, so following — the one write that notifies somebody —
+# is capped per account. Far above how fast a reader can tap; below how fast a script can.
+FOLLOW_LIMIT = (200, 60 * 60)
 
 
 def _get_target_user(db: Session, user_id: int) -> User:
@@ -29,6 +34,8 @@ def follow_user(
     target = _get_target_user(db, user_id)
     if target.id == current_user.id:
         raise HTTPException(status_code=400, detail="आप स्वयं को फ़ॉलो नहीं कर सकते")
+
+    enforce(actions, f"follow:{current_user.id}", *FOLLOW_LIMIT, record=True)
 
     existing = (
         db.query(Follow)

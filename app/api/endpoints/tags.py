@@ -56,4 +56,4 @@ def get_posts_by_tag(
         .all()
     )
     decorate_posts(posts, current_user, db)
-    return list_response(posts, request)
+    return list_response(posts, request, current_user)

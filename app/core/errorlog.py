@@ -4,9 +4,10 @@ Recording is best effort: it must never turn one failure into two, so it swallow
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 
+from app.core.clock import utcnow
 from app.database import SessionLocal
 from app.models.server_error import ServerError
 
@@ -29,7 +30,7 @@ def record_server_error(method: str, path: str, status: int, error: Optional[str
         db.add(ServerError(method=method[:10], path=path[:300], status=status, error=(error or None)))
         db.commit()
         # Housekeeping on the (rare) write: nothing older than a month, nothing past 500 rows.
-        db.query(ServerError).filter(ServerError.created_at < datetime.utcnow() - timedelta(days=KEEP_DAYS)).delete()
+        db.query(ServerError).filter(ServerError.created_at < utcnow() - timedelta(days=KEEP_DAYS)).delete()
         cutoff = db.query(ServerError.id).order_by(ServerError.id.desc()).offset(KEEP_ROWS).first()
         if cutoff is not None:
             db.query(ServerError).filter(ServerError.id <= cutoff[0]).delete()
