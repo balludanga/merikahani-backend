@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey
 from sqlalchemy.orm import backref, relationship
-from datetime import datetime
+from app.core.clock import utcnow
 from app.database import Base
 
 class Comment(Base):
@@ -16,8 +16,8 @@ class Comment(Base):
     parent_id = Column(Integer, ForeignKey("comments.id", ondelete="CASCADE"), nullable=True, index=True)
     post_id = Column(Integer, ForeignKey("posts.id"), nullable=False, index=True)
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     post = relationship("Post", back_populates="comments")
     author = relationship("User", back_populates="comments")

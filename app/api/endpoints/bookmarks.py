@@ -48,8 +48,7 @@ def get_my_bookmarks(
     for post in rows:
         post.my_claps = claps_by_post.get(post.id, 0)
         post.bookmarked = True
-        post.is_preview = False
-    return list_response(rows, request)
+    return list_response(rows, request, current_user)
 
 
 @router.post("/{post_id}", status_code=status.HTTP_201_CREATED)

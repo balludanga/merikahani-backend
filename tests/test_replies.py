@@ -1,7 +1,8 @@
 """Answering a response, being told about it, and keeping the inbox short."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from app.core.clock import utcnow
 from app.core.notify import KEEP_LATEST, prune_notifications
 from app.database import SessionLocal
 from app.models.notification import Notification
@@ -93,7 +94,7 @@ def test_a_quote_stays_on_top_level_responses_only(test_client, writer_a, writer
 def test_prune_drops_old_read_notifications_and_caps_the_inbox(test_client, writer_a, writer_b):
     user_id = writer_a["user"]["id"]
     actor_id = writer_b["user"]["id"]
-    now = datetime.utcnow()
+    now = utcnow()
     db = SessionLocal()
     try:
         db.query(Notification).filter(Notification.user_id == user_id).delete()

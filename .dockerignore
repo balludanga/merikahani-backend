@@ -1,0 +1,30 @@
+# Local state and secrets must never be baked into an image: .env holds the Gemini key and
+# the developer's SECRET_KEY, app.db holds real stories. Both are supplied at run time
+# (env vars / Render dashboard), not by copying them out of the build context.
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+data/
+
+# Machine and tooling junk
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+.github/
+.qoder/
+.DS_Store
+.idea/
+.vscode/
+
+# Not needed to serve the API
+*.md
+scripts/
+.dockerignore

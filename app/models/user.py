@@ -2,7 +2,7 @@ import json
 
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, false
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from app.core.clock import utcnow
 from app.database import Base
 
 class User(Base):
@@ -31,8 +31,8 @@ class User(Base):
     email_verified = Column(Boolean, nullable=False, default=False, server_default=false())
     # Bumped to invalidate every token issued earlier (takeover, password retired).
     token_version = Column(Integer, nullable=False, default=0, server_default="0")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     posts = relationship("Post", back_populates="author", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="author", cascade="all, delete-orphan")

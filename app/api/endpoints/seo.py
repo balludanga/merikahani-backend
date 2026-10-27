@@ -1,4 +1,3 @@
-from datetime import datetime
 from urllib.parse import quote
 from xml.sax.saxutils import escape
 
@@ -8,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.endpoints.posts import cover_url
+from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.content import preview_text
 from app.database import get_db
@@ -86,7 +86,7 @@ def generate_rss(db: Session = Depends(get_db)):
     rss += f'    <link>{base_url}</link>\n'
     rss += '    <description>हिंदी में कहानी, कविता, निबंध और संस्मरण — मानवीय लेखन का घर</description>\n'
     rss += '    <language>hi</language>\n'
-    rss += f'    <lastBuildDate>{datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")}</lastBuildDate>\n'
+    rss += f'    <lastBuildDate>{utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")}</lastBuildDate>\n'
     rss += f'    <atom:link href="{base_url}/rss.xml" rel="self" type="application/rss+xml"/>\n'
 
     # Get latest 50 published posts

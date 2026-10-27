@@ -1,6 +1,5 @@
-version: '3.8'
-
 services:
+  # Local development stack. The production path is render.yaml, not this file.
   backend:
     build:
       context: .
@@ -9,16 +8,25 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mount source code for hot reload
+      # Source code mounted so --reload below can see edits.
       - .:/app
-      # Mount database file to persist data
-      - ./app.db:/app/app.db
+      # The database lives in a named volume, as a *directory*. Bind-mounting ./app.db
+      # directly turns that path into an empty folder the first time it is missing, and
+      # SQLite then fails with "file is not a database".
+      - lekhani-db:/app/data
     environment:
       - PYTHONUNBUFFERED=1
+      # This is a dev box: docs on, localhost CORS trusted, sample SECRET_KEY tolerated.
+      # Set a real SECRET_KEY here before ever exposing this container to a network.
+      - DEBUG=true
+      - DATABASE_URL=sqlite:////app/data/app.db
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - lekhani-network
+
+volumes:
+  lekhani-db:
 
 networks:
   lekhani-network:

@@ -33,10 +33,14 @@ Built with FastAPI + SQLAlchemy.
 ## Running the Application
 
 ```bash
-uvicorn app.main:app --reload
+DEBUG=true uvicorn app.main:app --reload
 ```
 
 This starts the API at `http://127.0.0.1:8000`. Local development uses SQLite (`app.db`) by default; set `DATABASE_URL` for PostgreSQL in production.
+
+`DEBUG=true` is what turns on the interactive docs, trusts the `http://localhost:3000` / `:3001` CORS
+origins and stops IndexNow pinging real search engines from your laptop. With it unset the app assumes
+production: no `/docs`, and it refuses to start while `SECRET_KEY` is still the placeholder value.
 
 Interactive API docs: `http://127.0.0.1:8000/docs`
 

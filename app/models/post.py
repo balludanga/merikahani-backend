@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from app.core.clock import utcnow
 from app.database import Base
 
 class Post(Base):
@@ -17,8 +17,8 @@ class Post(Base):
     clap_count = Column(Integer, default=0, nullable=False)
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     published = Column(Integer, default=0, index=True)  # 0 = draft, 1 = published
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow, index=True)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     author = relationship("User", back_populates="posts")
     comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")

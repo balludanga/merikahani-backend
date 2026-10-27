@@ -2,6 +2,8 @@
 
 from typing import List
 
+from app.schemas.user import Badge
+
 # (needed, label, what it means), best first. A writer shows the best one they
 # have in each kind.
 _TIERS = {
@@ -24,12 +26,17 @@ _TIERS = {
 }
 
 
-def earned_badges(stories: int, claps: int, followers: int) -> List[dict]:
+def earned_badges(stories: int, claps: int, followers: int) -> List[Badge]:
+    """The best tier reached in each kind, as the response model itself.
+
+    These are handed straight to ``UserProfileResponse.badges``, which is not re-validated on
+    assignment: plain dicts here make Pydantic print a serializer warning on every profile read.
+    """
     totals = {"stories": stories, "claps": claps, "followers": followers}
     badges = []
     for kind, tiers in _TIERS.items():
         for needed, label, hint in tiers:
             if totals[kind] >= needed:
-                badges.append({"key": f"{kind}-{needed}", "kind": kind, "label": label, "hint": hint})
+                badges.append(Badge(key=f"{kind}-{needed}", kind=kind, label=label, hint=hint))
                 break
     return badges

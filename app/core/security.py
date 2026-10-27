@@ -1,8 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
-from jose import JWTError, jwt
-from jose.exceptions import ExpiredSignatureError
+from jose import jwt
 from passlib.context import CryptContext
+from app.core.clock import utcnow
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -22,9 +22,9 @@ DUMMY_HASH = get_password_hash("not-a-real-password")
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt

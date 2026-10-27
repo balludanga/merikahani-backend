@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
-from datetime import datetime
 import base64
 import binascii
 import re
@@ -16,6 +15,7 @@ from app.models.follow import Follow
 from app.models.bookmark import Bookmark
 from app.models.tag import Tag, post_tags
 from app.schemas.post import PostCreate, PostUpdate, PostResponse, ClapResponse
+from app.core.clock import epoch_seconds, utcnow
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.content import apply_read_gate, can_view_post
 from app.core.ratelimit import actions, enforce
@@ -31,6 +31,10 @@ MAX_CLAPS_PER_POST = 50
 # Per-account write limits (window seconds): posts/hour, claps/hour.
 POST_CREATE_LIMIT = (30, 60 * 60)
 CLAP_LIMIT = (300, 60 * 60)
+# The editor autosaves about every two seconds while the writer keeps pausing, so this
+# has to stay far above a human's fastest session — it is here to stop a script hammering
+# the database with 300 KB payloads, not to interfere with anyone's writing.
+POST_UPDATE_LIMIT = (900, 5 * 60)
 # Default and maximum rows for lists that used to be unbounded.
 OWN_LIST_DEFAULT = 200
 OWN_LIST_MAX = 500
@@ -43,7 +47,7 @@ def generate_slug(title: str) -> str:
     slug = re.sub(r"[^\w\sऀ-ॿ-]", "", slug, flags=re.UNICODE)
     slug = re.sub(r"[-\s]+", "-", slug).strip("-")[:80]
     if not slug:
-        slug = f"lekh-{int(datetime.utcnow().timestamp())}"
+        slug = f"lekh-{int(epoch_seconds())}"
     return slug
 
 
@@ -86,10 +90,14 @@ def normalize_tags(names, db: Session):
 
 
 def decorate_posts(posts, user: Optional[User], db: Session):
-    """Attach viewer-specific clap/bookmark state and apply the read gate."""
+    """Attach viewer-specific clap/bookmark state to posts for this request.
+
+    The read gate is deliberately *not* applied here: it belongs to the response
+    build (``reader_view`` / ``list_response``), so a signed-out page view never
+    touches a stored row.
+    """
     if not posts:
         return posts
-    apply_read_gate(posts, user)
     if not user:
         for post in posts:
             post.my_claps = 0
@@ -116,7 +124,7 @@ def public_base_url(request: Request) -> str:
 
 
 def cover_url(request: Request, post: Post) -> str:
-    version = int((post.updated_at or datetime.utcnow()).timestamp())
+    version = int(epoch_seconds(post.updated_at or utcnow()))
     return f"{public_base_url(request)}/api/posts/{post.id}/cover?v={version}"
 
 
@@ -125,15 +133,18 @@ SELF_COVER_RE = re.compile(r"/api/posts/\d+/cover(\?|$)")
 
 def reader_view(post: Post, viewer: Optional[User], request: Request) -> PostResponse:
     """Single-story response. Readers get inline covers as a cacheable image URL;
-    the author keeps the stored value so the editor can save it back unchanged."""
+    the author keeps the stored value so the editor can save it back unchanged.
+
+    The teaser is cut on this copy, so the ORM row keeps the full story."""
     item = PostResponse.model_validate(post)
+    apply_read_gate(item, viewer)
     is_author = viewer is not None and viewer.id == post.author_id
     if (item.cover_image or "").startswith("data:") and post.published == 1 and not is_author:
         item.cover_image = cover_url(request, post)
     return item
 
 
-def list_response(posts, request: Request) -> List[PostResponse]:
+def list_response(posts, request: Request, viewer: Optional[User]) -> List[PostResponse]:
     """Light list payload: no rich body, and published inline cover images become URLs.
 
     Built from copies so the ORM rows (and the stored cover) are never modified.
@@ -142,6 +153,7 @@ def list_response(posts, request: Request) -> List[PostResponse]:
     for post in posts:
         item = PostResponse.model_validate(post)
         item.content_html = None
+        apply_read_gate(item, viewer)
         if (item.cover_image or "").startswith("data:") and post.published == 1:
             item.cover_image = cover_url(request, post)
         items.append(item)
@@ -197,7 +209,7 @@ def get_posts(
 
     posts = query.order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
-    return list_response(posts, request)
+    return list_response(posts, request, current_user)
 
 
 @router.get("/me", response_model=List[PostResponse])
@@ -214,7 +226,7 @@ def get_my_posts(
         query = query.filter(Post.published == published)
     posts = query.order_by(Post.updated_at.desc()).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
-    return list_response(posts, request)
+    return list_response(posts, request, current_user)
 
 
 @router.get("/slug/{slug}", response_model=PostResponse)
@@ -249,7 +261,7 @@ def get_user_posts(
         query = query.filter(Post.published == 1)
     posts = query.order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
-    return list_response(posts, request)
+    return list_response(posts, request, current_user)
 
 
 @router.get("/{post_id}/cover")
@@ -273,7 +285,7 @@ def get_post_cover(
         binary = base64.b64decode(encoded)
     except (ValueError, binascii.Error):
         raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
-    etag = f'"{post.id}-{int((post.updated_at or datetime.utcnow()).timestamp())}"'
+    etag = f'"{post.id}-{int(epoch_seconds(post.updated_at or utcnow()))}"'
     headers = {"ETag": etag, "Cache-Control": "public, max-age=86400"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
@@ -297,6 +309,7 @@ def get_post(
 @router.post("", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 def create_post(
     post_data: PostCreate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -340,13 +353,14 @@ def create_post(
         background_tasks.add_task(
             indexnow_notify, urls_for_story_change(db_post.slug, db_post.author_id, [t.slug for t in db_post.tags])
         )
-    return db_post
+    return reader_view(db_post, current_user, request)
 
 
 @router.put("/{post_id}", response_model=PostResponse)
 def update_post(
     post_id: int,
     post_data: PostUpdate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -358,12 +372,17 @@ def update_post(
     if post.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="आप इस रचना को बदल नहीं सकते")
 
+    enforce(actions, f"edit:{current_user.id}", *POST_UPDATE_LIMIT, record=True)
+
     was_published = post.published == 1
     old_slug, old_tag_slugs = post.slug, [t.slug for t in post.tags]
     update_data = post_data.model_dump(exclude_unset=True)
     if SELF_COVER_RE.search(update_data.get("cover_image") or ""):
         update_data.pop("cover_image")  # that is just our own served copy: keep what is stored
-    if "title" in update_data and update_data["title"] != post.title:
+    if "title" in update_data and update_data["title"] != post.title and not was_published:
+        # Only a draft still re-derives its address from its title. A story that has gone
+        # live keeps the URL it was shared, bookmarked and indexed under, even when the
+        # title is reworded later; renaming must never break those links.
         slug = generate_slug(update_data["title"])
         existing = db.query(Post).filter(Post.slug == slug, Post.id != post_id).first()
         if existing:
@@ -393,7 +412,7 @@ def update_post(
             urls += urls_for_story_change(old_slug, post.author_id, [])
         background_tasks.add_task(indexnow_notify, urls)
     decorate_posts([post], current_user, db)
-    return post
+    return reader_view(post, current_user, request)
 
 
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)

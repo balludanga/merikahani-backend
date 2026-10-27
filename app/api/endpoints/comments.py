@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
 from app.database import get_db
@@ -20,18 +21,59 @@ def get_post_comments(
     db: Session = Depends(get_db),
     skip: int = Query(0, ge=0, le=100000),
     limit: int = Query(200, ge=1, le=500),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    """Get the comments for a specific post, oldest first"""
+    """
+    Responses for a story.
+
+    asc (the default) reads oldest first, `limit` rows per page. desc reads newest
+    thread first, `limit` threads per page, and always returns a thread together with
+    its answers, so an answer is never cut off from the response it belongs to.
+    """
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post or not can_view_post(post, current_user):
         raise HTTPException(status_code=404, detail="रचना नहीं मिली")
-    
+
+    if order == "desc":
+        roots = [
+            row[0]
+            for row in db.query(Comment.id)
+            .filter(Comment.post_id == post_id, Comment.parent_id.is_(None))
+            .order_by(Comment.created_at.desc(), Comment.id.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        ]
+        if not roots:
+            return []
+        thread_of = {root_id: index for index, root_id in enumerate(roots)}
+        rows = (
+            db.query(Comment)
+            .options(selectinload(Comment.author))
+            .filter(
+                Comment.post_id == post_id,
+                or_(Comment.id.in_(roots), Comment.parent_id.in_(roots)),
+            )
+            .all()
+        )
+        # Newest thread first; inside a thread the response then its answers, oldest first.
+        # Stamps are second-precision, so the id breaks ties within the same instant.
+        rows.sort(
+            key=lambda c: (
+                thread_of[c.parent_id or c.id],
+                c.parent_id is not None,
+                c.created_at,
+                c.id,
+            )
+        )
+        return rows
+
     comments = (
         db.query(Comment)
         .options(selectinload(Comment.author))
         .filter(Comment.post_id == post_id)
-        .order_by(Comment.created_at.asc())
+        .order_by(Comment.created_at.asc(), Comment.id.asc())
         .offset(skip)
         .limit(limit)
         .all()

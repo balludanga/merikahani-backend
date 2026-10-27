@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.core.clock import utcnow
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 
@@ -23,7 +23,7 @@ class StoryAudio(Base):
     # When each word is spoken (JSON from app.core.timing), for the follow-along highlight.
     # Narrations made before this existed have none and get an estimate.
     timings = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
 
 class TtsUsage(Base):

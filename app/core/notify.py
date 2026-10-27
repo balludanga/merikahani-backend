@@ -5,11 +5,12 @@ own action, so ``notify`` swallows and logs its errors.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import utcnow
 from app.models.notification import CLAP, FOLLOW, HIGHLIGHT, Notification
 from app.models.post import Post
 
@@ -83,7 +84,7 @@ def notify(
         if existing is not None:
             existing.count = count if count is not None else (existing.count or 0) + 1
             existing.text = _excerpt(text) or existing.text
-            existing.created_at = datetime.utcnow()
+            existing.created_at = utcnow()
         else:
             db.add(
                 Notification(
@@ -109,7 +110,7 @@ def prune_notifications(db: Session, user_id: int) -> None:
         db.query(Notification).filter(
             Notification.user_id == user_id,
             Notification.read_at.isnot(None),
-            Notification.created_at < datetime.utcnow() - READ_RETENTION,
+            Notification.created_at < utcnow() - READ_RETENTION,
         ).delete(synchronize_session=False)
         cutoff = (
             db.query(Notification.id)

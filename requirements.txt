@@ -1,4 +1,8 @@
 FastAPI
+# Floor set by CORSMiddleware(allow_private_network=...) in app/main.py, an argument added in
+# this release - and whose default (off) would otherwise silently refuse a private-network
+# preflight. FastAPI's own range still decides what gets installed.
+starlette>=0.51
 uvicorn[standard]
 pydantic
 pydantic-settings

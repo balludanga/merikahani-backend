@@ -16,7 +16,6 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime
 from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -24,6 +23,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core import timing
+from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.content import PREVIEW_LIMIT
 from app.core.dependencies import get_current_user_optional
@@ -118,14 +118,14 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
             )
             timings_json = timing.dumps(timings) if timings.get("w") else None
         _partials.pop(digest, None)
-        month = datetime.utcnow().strftime("%Y-%m")
+        month = utcnow().strftime("%Y-%m")
         db = SessionLocal()
         try:
             row = db.query(StoryAudio).filter(StoryAudio.post_id == post_id).first()
             if row:
                 row.content_hash, row.voice, row.audio, row.chars = digest, voices, audio, chars
                 row.timings = timings_json
-                row.created_at = datetime.utcnow()
+                row.created_at = utcnow()
             else:
                 db.add(StoryAudio(post_id=post_id, content_hash=digest, voice=voices, audio=audio, chars=chars, timings=timings_json))
             usage = db.query(TtsUsage).filter(TtsUsage.month == month).first()
@@ -215,7 +215,7 @@ def get_story_audio(
         enforce(actions, key, GENERATIONS_PER_HOUR, 3600, record=True)
         # Quotes are read as separate pieces, so the story's own length is close to what is sent.
         chars = len(content) + len(post.title or "")
-        month = datetime.utcnow().strftime("%Y-%m")
+        month = utcnow().strftime("%Y-%m")
         usage = db.query(TtsUsage).filter(TtsUsage.month == month).first()
         if (usage.chars if usage else 0) + chars > settings.TTS_MONTHLY_CHARS:
             raise HTTPException(status_code=503, detail="इस महीने की सर्वर-आवाज़ की सीमा पूरी हो चुकी है")

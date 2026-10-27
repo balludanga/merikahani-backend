@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
+import re
 import requests
 import logging
 import secrets
@@ -9,7 +10,8 @@ from app.schemas.user import Token, UserResponse, UserCreate, UserLogin
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import timedelta
+from app.core.clock import utcnow
 from app.database import get_db
 from app.models.user import User
 from app.core.security import DUMMY_HASH, get_password_hash, create_access_token, verify_password
@@ -95,10 +97,16 @@ def _claims_from_access_token(access_token: str) -> dict:
 
 def _unique_username(db: Session, base: str) -> str:
     """Google sign-up derives the username from the email; never collide with a taken one."""
-    base = (base or "writer")[:30]
-    candidate = base
+    # An address can hold anything in its local part ("a.b+c@gmail", "जय"). Cut it down to
+    # the shape the profile allows (^[\w.]{3,30}$), or the account is born with a name its
+    # own writer would be refused the day they edit their profile.
+    cleaned = re.sub(r"[^\w.]", "", base or "", flags=re.UNICODE).strip("._")[:30]
+    if len(cleaned) < 3:
+        cleaned = f"writer{cleaned}"[:30]
+    candidate = cleaned
     while db.query(User.id).filter(User.username == candidate).first():
-        candidate = f"{base[:24]}_{secrets.token_hex(3)}"
+        # 23 + "_" + 6 hex digits: the suffix has to fit inside the same 30 characters.
+        candidate = f"{cleaned[:23]}_{secrets.token_hex(3)}"
     return candidate
 
 
@@ -129,7 +137,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, db: Session = De
 
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user:
-        now = datetime.utcnow()
+        now = utcnow()
         user = User(
             email=email,
             username=_unique_username(db, email.split("@")[0]),

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.core.clock import from_timestamp, utcnow
 from app.core.config import settings
 from app.core.dependencies import get_current_user_optional
 from app.database import engine, get_db
@@ -81,7 +82,7 @@ def _database() -> dict:
 
 @router.get("/overview")
 def overview(db: Session = Depends(get_db), _admin: User = Depends(require_admin)):
-    now = datetime.utcnow()
+    now = utcnow()
     since = (now - timedelta(days=DAYS - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     week = now - timedelta(days=7)
 
@@ -115,7 +116,7 @@ def overview(db: Session = Depends(get_db), _admin: User = Depends(require_admin
     return {
         "generated_at": now.isoformat(),
         "server": {
-            "started_at": datetime.utcfromtimestamp(STARTED_AT).isoformat(),
+            "started_at": from_timestamp(STARTED_AT).isoformat(),
             "uptime_seconds": int(time.time() - STARTED_AT),
             "commit": (os.getenv("RENDER_GIT_COMMIT") or "")[:7] or None,
             "debug": bool(settings.debug),

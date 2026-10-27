@@ -1,6 +1,6 @@
 """Publication-style read gate: signed-out visitors get a teaser, members read everything."""
 
-from typing import List, Optional, Union
+from typing import Optional
 
 from app.models.post import Post
 from app.models.user import User
@@ -29,22 +29,24 @@ def preview_text(content: str, limit: int = PREVIEW_LIMIT) -> str:
     return cut.rstrip() + " …"
 
 
-def apply_read_gate(posts: Union[Post, List[Post]], user: Optional[User]) -> None:
-    """Truncate content for anonymous viewers and flag posts as previews.
+def apply_read_gate(item, user: Optional[User]):
+    """Trim one response object's body for a signed-out reader.
 
-    Sets ``post.is_preview`` on every post: ``True`` when content was cut
-    for a signed-out reader, ``False`` otherwise. Content at or below
-    ``PREVIEW_LIMIT`` characters stays fully readable — there is nothing
-    meaningful left to hide behind the gate.
+    Callers pass the *copy* built for the response, never the ORM row: a gated read
+    that rewrote ``post.content`` on a session-bound instance would leave the teaser
+    sitting there, and any later commit in that request (a notification, a counter,
+    a retry) would store it as the story — silently destroying what the writer wrote.
+
+    Sets ``item.is_preview``: ``True`` when content was cut for a signed-out reader,
+    ``False`` otherwise. Content at or below ``PREVIEW_LIMIT`` characters stays fully
+    readable — there is nothing meaningful left to hide behind the gate.
     """
-    if isinstance(posts, Post):
-        posts = [posts]
-    for post in posts:
-        content = post.content or ""
-        if user is None and len(content) > PREVIEW_LIMIT:
-            post.content = preview_text(content)
-            # Never leak the full body through the rich-text rendering.
-            post.content_html = None
-            post.is_preview = True
-        else:
-            post.is_preview = False
+    content = item.content or ""
+    if user is None and len(content) > PREVIEW_LIMIT:
+        item.content = preview_text(content)
+        # Never leak the full body through the rich-text rendering.
+        item.content_html = None
+        item.is_preview = True
+    else:
+        item.is_preview = False
+    return item

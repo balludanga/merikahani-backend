@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.core.clock import utcnow
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -30,7 +30,7 @@ class Notification(Base):
     text = Column(Text, nullable=True)
     # Claps given / passages highlighted by this reader (merged while unread).
     count = Column(Integer, nullable=False, default=1)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)
     read_at = Column(DateTime, nullable=True)
 
     actor = relationship("User", foreign_keys=[actor_id])

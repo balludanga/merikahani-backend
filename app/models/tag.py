@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Table
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from app.core.clock import utcnow
 from app.database import Base
 
 post_tags = Table(
@@ -17,7 +17,7 @@ class Tag(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(40), unique=True, index=True, nullable=False)
     slug = Column(String(80), unique=True, index=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     posts = relationship(
         "Post",
