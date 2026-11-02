@@ -12,6 +12,10 @@ HIGHLIGHT = "highlight"
 FOLLOW = "follow"
 # Someone answered one of your responses.
 REPLY = "reply"
+# A reviewer sent your story back with notes / approved it again; the writer sent it back to review.
+REVIEW_CHANGES = "review_changes"
+REVIEW_APPROVED = "review_approved"
+REVIEW_RESUBMIT = "review_resubmit"
 
 
 class Notification(Base):

@@ -21,6 +21,7 @@ from app.core.content import apply_read_gate, can_view_post
 from app.core.ratelimit import actions, enforce
 from app.core.notify import notify
 from app.models.notification import CLAP
+from app.core.review import tell_reviewers_of_resubmission
 from app.core.indexnow import notify as indexnow_notify, urls_for_story_change
 from app.core.sanitize import clean_html
 
@@ -389,6 +390,15 @@ def update_post(
             slug = unique_suffix(slug)
         update_data["slug"] = slug
 
+    resubmitting = False
+    if post.moderation_state != "none" and update_data.get("published") == 1:
+        # A story a reviewer sent back cannot be put live by the writer: "publish" sends it back
+        # to the reviewers instead, and it stays hidden until one approves it.
+        update_data["published"] = 0
+        if post.moderation_state == "changes_requested":
+            update_data["moderation_state"] = "resubmitted"
+            resubmitting = True
+
     new_tags = update_data.pop("tags", None)
     if "content_html" in update_data:
         update_data["content_html"] = clean_html(update_data["content_html"])
@@ -404,6 +414,8 @@ def update_post(
         db.rollback()
         raise HTTPException(status_code=409, detail="यह शीर्षक अभी उपयोग में है, कृपया दोबारा कोशिश करें")
     db.refresh(post)
+    if resubmitting:
+        tell_reviewers_of_resubmission(db, post, current_user)
     if was_published or post.published == 1:
         # Edited, newly published, unpublished or renamed: tell search engines about the new
         # address and (if it changed or the story went private) the old one, which now 404s.

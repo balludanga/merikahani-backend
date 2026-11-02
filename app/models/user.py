@@ -43,6 +43,13 @@ class User(Base):
         "Follow", foreign_keys="Follow.following_id", back_populates="following_user", cascade="all, delete-orphan"
     )
 
+    @property
+    def is_admin(self) -> bool:
+        """A reviewer (see app.core.admin). Shown only to the signed-in user themselves."""
+        from app.core.admin import is_admin
+
+        return is_admin(self)
+
     @staticmethod
     def _load(raw):
         try:

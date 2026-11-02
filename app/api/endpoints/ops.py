@@ -15,6 +15,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.clock import from_timestamp, utcnow
+from app.core.admin import admin_emails, is_admin, require_admin  # noqa: F401 - re-exported for the tests
 from app.core.config import settings
 from app.core.dependencies import get_current_user_optional
 from app.database import engine, get_db
@@ -34,20 +35,6 @@ STARTED_AT = time.time()
 # Supabase's free plan allows 500 MB of database.
 DATABASE_LIMIT_BYTES = 500 * 1024 * 1024
 DAYS = 30
-
-
-def admin_emails() -> set:
-    return {item.strip().lower() for item in (settings.ADMIN_EMAILS or "").split(",") if item.strip()}
-
-
-def is_admin(user: Optional[User]) -> bool:
-    return bool(user and user.email_verified and (user.email or "").strip().lower() in admin_emails())
-
-
-def require_admin(user: Optional[User] = Depends(get_current_user_optional)) -> User:
-    if not is_admin(user):
-        raise HTTPException(status_code=404, detail="Not Found")
-    return user
 
 
 def _per_day(db: Session, column, since: datetime, *filters) -> dict:

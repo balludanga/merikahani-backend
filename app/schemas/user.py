@@ -33,6 +33,8 @@ class PublicUserResponse(BaseModel):
 class UserResponse(PublicUserResponse):
     """The signed-in user's own account (login, register, /auth/me only)."""
     email: EmailStr
+    # Whether this account can review stories; drives the reviewer's controls in the app.
+    is_admin: bool = False
 
 class Token(BaseModel):
     access_token: str

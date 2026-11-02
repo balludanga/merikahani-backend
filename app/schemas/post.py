@@ -69,6 +69,8 @@ class PostResponse(BaseModel):
     cover_image: Optional[str] = None
     topic: Optional[str] = None
     published: int = 0
+    # 'none' for anything the public can read; the writer and reviewers see the review state.
+    moderation_state: str = "none"
     slug: str
     author_id: int
     author: PublicUserResponse

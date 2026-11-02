@@ -17,6 +17,9 @@ class Post(Base):
     clap_count = Column(Integer, default=0, nullable=False)
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     published = Column(Integer, default=0, index=True)  # 0 = draft, 1 = published
+    # 'none' | 'changes_requested' | 'resubmitted' (see app/models/review.py). A story under review
+    # has published = 0, so every public list, feed and sitemap already leaves it out.
+    moderation_state = Column(String(20), nullable=False, default="none", server_default="none", index=True)
     created_at = Column(DateTime, default=utcnow, index=True)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -27,6 +30,8 @@ class Post(Base):
     highlights = relationship("Highlight", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="post", cascade="all, delete-orphan")
     audio = relationship("StoryAudio", cascade="all, delete-orphan", uselist=False)
+    review_notes = relationship("ReviewNote", cascade="all, delete-orphan")
+    review_rounds = relationship("ReviewRound", cascade="all, delete-orphan")
     tags = relationship("Tag", secondary="post_tags", back_populates="posts", lazy="selectin")
 
     @property

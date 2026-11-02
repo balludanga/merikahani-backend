@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from app.core.admin import is_admin
 from app.models.post import Post
 from app.models.user import User
 
@@ -10,8 +11,18 @@ PREVIEW_LIMIT = 600
 
 
 def can_view_post(post: Post, user: Optional[User]) -> bool:
-    """Published posts are public; drafts are visible only to their author."""
-    return post.published == 1 or (user is not None and post.author_id == user.id)
+    """Published posts are public; drafts are visible only to their author.
+
+    A story that a reviewer sent back (or that the writer sent back to them) is unpublished
+    but not private: reviewers may read it. A plain draft stays the writer's alone.
+    """
+    if post.published == 1:
+        return True
+    if user is None:
+        return False
+    if post.author_id == user.id:
+        return True
+    return post.moderation_state != "none" and is_admin(user)
 
 
 def preview_text(content: str, limit: int = PREVIEW_LIMIT) -> str:

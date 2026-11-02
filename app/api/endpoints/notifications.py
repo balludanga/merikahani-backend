@@ -7,9 +7,12 @@ from app.core.clock import utcnow
 from app.core.dependencies import get_current_user
 from app.database import get_db
 from app.core.notify import prune_notifications
-from app.models.notification import FOLLOW, Notification
+from app.models.notification import FOLLOW, REVIEW_APPROVED, REVIEW_CHANGES, Notification
 from app.models.user import User
-from app.schemas.notification import MarkRead, NotificationResponse, UnreadCount
+from app.schemas.notification import MarkRead, NotificationActor, NotificationResponse, UnreadCount
+
+# A reviewer acts for the platform: the writer is told "the review team", never which account.
+REVIEW_TEAM = NotificationActor(id=0, username="समीक्षा टीम", full_name="समीक्षा टीम")
 
 router = APIRouter()
 
@@ -48,7 +51,7 @@ def list_notifications(
             comment_id=row.comment_id,
             created_at=row.created_at,
             read=row.read_at is not None,
-            actor=row.actor,
+            actor=REVIEW_TEAM if row.kind in (REVIEW_CHANGES, REVIEW_APPROVED) else row.actor,
             post=row.post,
         )
         for row in rows
