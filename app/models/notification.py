@@ -16,6 +16,23 @@ REPLY = "reply"
 REVIEW_CHANGES = "review_changes"
 REVIEW_APPROVED = "review_approved"
 REVIEW_RESUBMIT = "review_resubmit"
+# Write and earn. A writer applied (told to the reviewers); the review team accepted, declined or
+# removed them; they crossed the follower line; or they were paid (told to the writer).
+PARTNER_APPLIED = "partner_applied"
+PARTNER_APPROVED = "partner_approved"
+PARTNER_DECLINED = "partner_declined"
+PARTNER_REVOKED = "partner_revoked"
+PARTNER_ELIGIBLE = "partner_eligible"
+PAYOUT_PAID = "payout_paid"
+
+# About a person or the programme rather than a story, so they carry no post.
+POSTLESS = (
+    FOLLOW, PARTNER_APPLIED, PARTNER_APPROVED, PARTNER_DECLINED, PARTNER_REVOKED, PARTNER_ELIGIBLE, PAYOUT_PAID,
+)
+# Said by the review team, never by the account of the reviewer who acted.
+REVIEW_TEAM_VOICE = (REVIEW_CHANGES, REVIEW_APPROVED, PARTNER_APPROVED, PARTNER_DECLINED, PARTNER_REVOKED)
+# Said by the site itself.
+SITE_VOICE = (PARTNER_ELIGIBLE, PAYOUT_PAID)
 
 
 class Notification(Base):

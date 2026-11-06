@@ -79,6 +79,17 @@ class Settings(BaseSettings):
     # address Google has verified counts, and an empty list means nobody can.
     ADMIN_EMAILS: str = os.getenv("ADMIN_EMAILS", "")
 
+    # Write and earn (the partner programme). A writer may apply once they have this many
+    # followers and published stories; the review team then decides. After a decline they wait
+    # PARTNER_REAPPLY_DAYS. Only readers whose account is at least PARTNER_READER_MIN_AGE_DAYS old
+    # count towards a month's pool. Amounts below PARTNER_MIN_PAYOUT_RUPEES are carried over
+    # instead of being paid out.
+    PARTNER_MIN_FOLLOWERS: int = int(os.getenv("PARTNER_MIN_FOLLOWERS", "200"))
+    PARTNER_MIN_STORIES: int = int(os.getenv("PARTNER_MIN_STORIES", "1"))
+    PARTNER_REAPPLY_DAYS: int = int(os.getenv("PARTNER_REAPPLY_DAYS", "30"))
+    PARTNER_READER_MIN_AGE_DAYS: int = int(os.getenv("PARTNER_READER_MIN_AGE_DAYS", "7"))
+    PARTNER_MIN_PAYOUT_RUPEES: int = int(os.getenv("PARTNER_MIN_PAYOUT_RUPEES", "100"))
+
     # Public frontend URL (used for sitemap / RSS links)
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")
 

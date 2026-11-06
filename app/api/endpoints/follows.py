@@ -9,6 +9,7 @@ from app.schemas.user import PublicUserResponse
 from app.core.dependencies import get_current_user
 from app.core.ratelimit import actions, enforce
 from app.core.notify import notify
+from app.core.partner import tell_writer_they_can_apply
 from app.models.notification import FOLLOW
 
 router = APIRouter()
@@ -42,6 +43,7 @@ def follow_user(
         .filter(Follow.follower_id == current_user.id, Follow.following_id == target.id)
         .first()
     )
+    created = False
     if not existing:
         db.add(Follow(follower_id=current_user.id, following_id=target.id))
         try:
@@ -49,9 +51,13 @@ def follow_user(
         except IntegrityError:
             db.rollback()  # a concurrent request already followed
         else:
+            created = True
             notify(db, actor_id=current_user.id, kind=FOLLOW, recipient_id=target.id)
 
     followers = db.query(Follow).filter(Follow.following_id == target.id).count()
+    if created:
+        # Once a writer's followers reach the line for write-and-earn, tell them they can apply.
+        tell_writer_they_can_apply(db, target.id, followers, current_user.id)
     return {"following": True, "follower_count": followers}
 
 

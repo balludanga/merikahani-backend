@@ -11,7 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.clock import utcnow
-from app.models.notification import CLAP, FOLLOW, HIGHLIGHT, Notification
+from app.models.notification import CLAP, FOLLOW, HIGHLIGHT, PARTNER_ELIGIBLE, Notification
 from app.models.post import Post
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,14 @@ def notify(
                     Notification.actor_id == actor_id,
                     Notification.kind == FOLLOW,
                 )
+                .first()
+            ):
+                return
+        elif kind == PARTNER_ELIGIBLE:
+            # "You can now apply" is said once to a writer, whoever's follow tipped them over.
+            if (
+                db.query(Notification.id)
+                .filter(Notification.user_id == recipient_id, Notification.kind == PARTNER_ELIGIBLE)
                 .first()
             ):
                 return
