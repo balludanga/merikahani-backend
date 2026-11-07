@@ -25,7 +25,17 @@ def guard_production_secrets() -> None:
         )
 
 
+def guard_payments_config() -> None:
+    """The offline pretend payment provider confirms any payment on request. It must never be reachable in production."""
+    if settings.PAYMENTS_PROVIDER == "sandbox" and not settings.debug:
+        raise RuntimeError(
+            "PAYMENTS_PROVIDER=sandbox is for development only and needs DEBUG=true "
+            "(leave PAYMENTS_PROVIDER empty until a real provider is connected)"
+        )
+
+
 guard_production_secrets()
+guard_payments_config()
 
 # Bring the schema up to date (creates tables, adds columns/indexes, backfills) before serving.
 run_migrations()

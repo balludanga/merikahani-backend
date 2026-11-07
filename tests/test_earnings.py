@@ -26,6 +26,7 @@ from app.models.notification import Notification
 from app.models.partner import APPROVED, PENDING, REVOKED, EarningLine, EarningMonth, PartnerApplication, Payout
 from app.models.user import User
 from tests.conftest import _register_and_login
+from tests.money_helpers import wipe_programme_books
 from tests.test_posts import _create_post
 
 ADMIN_EMAIL = "testuser@example.com"  # the address the mocked Google reply returns
@@ -39,6 +40,7 @@ def _admin_is_listed():
 
 
 def _wipe():
+    wipe_programme_books()
     db = SessionLocal()
     try:
         for model in (Payout, EarningLine, EarningMonth, PartnerApplication):
@@ -339,7 +341,7 @@ def test_set_the_pool_preview_finalize_and_the_writer_reads_the_statement(test_c
     statement = test_client.get("/api/partner/earnings", headers=a["headers"]).json()
     assert statement["balance_paise"] == 75_000 and statement["earned_paise"] == 75_000 and statement["paid_paise"] == 0
     assert statement["months"] == [
-        {"month": month, "claps": 1, "highlights": 0, "responses": 1, "readers": 1, "points": 6,
+        {"month": month, "claps": 1, "highlights": 0, "responses": 1, "readers": 1, "points": 6, "member_points": 0,
          "amount_paise": 75_000, "held_reason": None}
     ]
     listing = team(test_client, admin, "get", "/months").json()

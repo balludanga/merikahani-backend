@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.endpoints.uploads import ALLOWED_TYPES, ImagePayload, _decode
 from app.core.badges import earned_badges
+from app.core.membership import shows_badge
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.ratelimit import actions, enforce
 from app.database import get_db
@@ -51,6 +52,7 @@ def _build_profile(db: Session, user: User, viewer: Optional[User]) -> UserProfi
         .filter(Follow.follower_id == viewer.id, Follow.following_id == user.id)
         .first()
     )
+    profile.is_member = shows_badge(db, user.id)
     return profile
 
 

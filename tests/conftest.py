@@ -8,9 +8,12 @@ import pytest
 
 # Tests run against a throwaway database, never the developer's own app.db. This has to be
 # set before the app is imported, because the database URL is read once at import time.
+# TEST_DATABASE_URL is an explicit opt-in to run the whole suite against another database instead
+# (a throwaway, empty Postgres, to check the SQL the way production runs it). It is never read
+# from DATABASE_URL, so a developer's own database can not be picked up by accident.
 _TEST_DB_DIR = tempfile.mkdtemp(prefix="lekhani-tests-")
 atexit.register(shutil.rmtree, _TEST_DB_DIR, ignore_errors=True)
-os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(_TEST_DB_DIR, 'test.db')}"
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{os.path.join(_TEST_DB_DIR, 'test.db')}"
 # Tests behave like a local dev box: debug on, so /docs exist, the localhost CORS origins are
 # trusted and IndexNow stays quiet. Debug now fails closed, so state it here rather than
 # relying on a default.

@@ -64,6 +64,9 @@ class RulesOut(BaseModel):
     reader_min_age_days: int
     reapply_days: int
     min_payout_paise: int
+    # What a reader's reaction is worth this month, by whether the reader holds a membership.
+    member_weight: int = 1
+    nonmember_weight: int = 1
 
 
 class ApplicationOut(BaseModel):
@@ -100,6 +103,7 @@ class LiveMonth(BaseModel):
     responses: int
     readers: int
     points: int
+    member_points: int = 0
     # What the points would pay if the month ended now; None until a pool is set for it.
     estimate_paise: Optional[int] = None
     ends_at: datetime
@@ -112,6 +116,7 @@ class StatementLine(BaseModel):
     responses: int
     readers: int
     points: int
+    member_points: int = 0
     amount_paise: int
     held_reason: Optional[str] = None
 
@@ -127,7 +132,10 @@ class PayoutOut(BaseModel):
 
 class EarningsOut(BaseModel):
     balance_paise: int
+    # Everything credited to the writer: the pool's shares and tips together.
     earned_paise: int
+    pool_paise: int = 0
+    tips_paise: int = 0
     paid_paise: int
     live: Optional[LiveMonth] = None
     months: List[StatementLine]
@@ -217,6 +225,9 @@ class PoolRequest(BaseModel):
     pool_rupees: Decimal = Field(ge=0, le=10_000_000, max_digits=12, decimal_places=2)
     # What one point may pay at most; empty means no ceiling.
     max_per_point_rupees: Optional[Decimal] = Field(None, gt=0, le=100_000, max_digits=9, decimal_places=2)
+    # What a reader's reaction is worth this month; empty means the site-wide setting.
+    member_weight: Optional[int] = Field(None, ge=1, le=10)
+    nonmember_weight: Optional[int] = Field(None, ge=0, le=10)
 
 
 class Exclusion(BaseModel):
@@ -256,6 +267,8 @@ class MonthSummary(BaseModel):
     ended: bool
     total_points: int = 0
     distributed_paise: int = 0
+    member_weight: int = 1
+    nonmember_weight: int = 1
 
 
 class MonthRowOut(BaseModel):
@@ -265,6 +278,7 @@ class MonthRowOut(BaseModel):
     responses: int
     readers: int
     points: int
+    member_points: int = 0
     amount_paise: int
     held_reason: Optional[str] = None
     # The biggest single reader's share of this writer's points, in percent: a lopsided number
@@ -287,6 +301,8 @@ class BalanceRow(BaseModel):
     user: Person
     balance_paise: int
     earned_paise: int
+    # Of the earned amount, the part that came from tips.
+    tips_paise: int = 0
     paid_paise: int
     payout_upi: Optional[str] = None
     # Balance has reached the smallest amount that is paid out.

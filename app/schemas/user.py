@@ -35,6 +35,8 @@ class UserResponse(PublicUserResponse):
     email: EmailStr
     # Whether this account can review stories; drives the reviewer's controls in the app.
     is_admin: bool = False
+    # Whether this account can open the money pages (the monthly sheet, the books).
+    is_owner: bool = False
 
 class Token(BaseModel):
     access_token: str
@@ -63,5 +65,7 @@ class UserProfileResponse(PublicUserResponse):
     post_count: int = 0
     claps_total: int = 0
     is_following: bool = False
+    # Holds a membership and shows the badge (the reader's own choice).
+    is_member: bool = False
 
 

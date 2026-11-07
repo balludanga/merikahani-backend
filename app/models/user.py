@@ -50,6 +50,13 @@ class User(Base):
 
         return is_admin(self)
 
+    @property
+    def is_owner(self) -> bool:
+        """The owner (see app.core.admin): the only reviewer who sees the money pages."""
+        from app.core.admin import is_owner
+
+        return is_owner(self)
+
     @staticmethod
     def _load(raw):
         try:

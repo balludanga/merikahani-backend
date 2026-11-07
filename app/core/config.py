@@ -90,6 +90,56 @@ class Settings(BaseSettings):
     PARTNER_READER_MIN_AGE_DAYS: int = int(os.getenv("PARTNER_READER_MIN_AGE_DAYS", "7"))
     PARTNER_MIN_PAYOUT_RUPEES: int = int(os.getenv("PARTNER_MIN_PAYOUT_RUPEES", "100"))
 
+    # Who owns the site: comma-separated emails, Google-verified like ADMIN_EMAILS. An owner is also a
+    # reviewer, and is the only one who can open the money pages (the monthly sheet, the books, the
+    # payment log). Empty means nobody can.
+    OWNER_EMAILS: str = os.getenv("OWNER_EMAILS", "")
+
+    # Payments. Empty = the site takes no money and shows nothing about it. "sandbox" is an offline
+    # stand-in for development and tests (refused when DEBUG is off). A real provider is switched on by
+    # name once its adapter is connected (see app/core/payments/providers/__init__.py). The three
+    # credentials below are provider-neutral: whichever adapter is connected reads them.
+    PAYMENTS_PROVIDER: str = os.getenv("PAYMENTS_PROVIDER", "").strip().lower()
+    PAYMENTS_API_KEY: str = os.getenv("PAYMENTS_API_KEY", "")
+    PAYMENTS_API_SECRET: str = os.getenv("PAYMENTS_API_SECRET", "")
+    PAYMENTS_WEBHOOK_SECRET: str = os.getenv("PAYMENTS_WEBHOOK_SECRET", "")
+    # Signs the sandbox's pretend webhooks. Worthless on purpose: the sandbox cannot run in production.
+    PAYMENTS_SANDBOX_SECRET: str = os.getenv("PAYMENTS_SANDBOX_SECRET", "sandbox-secret-for-development-only")
+
+    # Tips: the smallest and largest tip, and the quick-pick amounts shown to the reader (rupees).
+    TIP_MIN_RUPEES: int = int(os.getenv("TIP_MIN_RUPEES", "10"))
+    TIP_MAX_RUPEES: int = int(os.getenv("TIP_MAX_RUPEES", "10000"))
+    TIP_PRESET_RUPEES: str = os.getenv("TIP_PRESET_RUPEES", "20,50,100")
+    # What the site keeps of each tip, in basis points (1000 = 10%); the rest is the writer's.
+    TIP_SITE_FEE_BPS: int = int(os.getenv("TIP_SITE_FEE_BPS", "1000"))
+
+    # Membership prices (rupees, tax included). GST_PERCENT is the GST inside those prices: 0 while the
+    # site is not registered for it.
+    MEMBERSHIP_MONTHLY_RUPEES: int = int(os.getenv("MEMBERSHIP_MONTHLY_RUPEES", "49"))
+    MEMBERSHIP_YEARLY_RUPEES: int = int(os.getenv("MEMBERSHIP_YEARLY_RUPEES", "399"))
+    GST_PERCENT: int = int(os.getenv("GST_PERCENT", "0"))
+
+    # How many points a reader's reaction is worth, by whether the reader held a membership at that
+    # moment (whole numbers; each month can override both). 1 and 1 changes nothing; 1 and 0 counts
+    # members only. Applied to the month's pool only, never retroactively to a finalized month.
+    POINTS_MEMBER_WEIGHT: int = int(os.getenv("POINTS_MEMBER_WEIGHT", "1"))
+    POINTS_NONMEMBER_WEIGHT: int = int(os.getenv("POINTS_NONMEMBER_WEIGHT", "1"))
+
+    # Where narration MP3s are kept: "db" (in the story_audio row, as before), "local" (a folder, for
+    # development or a host with a persistent disk) or "remote" (an object-storage service, once its
+    # adapter is connected: app/core/blobstore.py). If the chosen place is not usable the audio simply
+    # stays in the database, so narration never breaks over this.
+    AUDIO_STORAGE: str = os.getenv("AUDIO_STORAGE", "db").strip().lower()
+    AUDIO_LOCAL_DIR: str = os.getenv(
+        "AUDIO_LOCAL_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "audio_store"))
+    )
+    # Credentials for the remote object store (provider-neutral names, like the payments ones).
+    OBJECT_STORE_ENDPOINT: str = os.getenv("OBJECT_STORE_ENDPOINT", "")
+    OBJECT_STORE_BUCKET: str = os.getenv("OBJECT_STORE_BUCKET", "")
+    OBJECT_STORE_ACCESS_KEY: str = os.getenv("OBJECT_STORE_ACCESS_KEY", "")
+    OBJECT_STORE_SECRET_KEY: str = os.getenv("OBJECT_STORE_SECRET_KEY", "")
+    OBJECT_STORE_REGION: str = os.getenv("OBJECT_STORE_REGION", "")
+
     # Public frontend URL (used for sitemap / RSS links)
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")
 

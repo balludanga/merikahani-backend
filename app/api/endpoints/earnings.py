@@ -33,11 +33,14 @@ from app.core.earnings import (
     previous_month,
     to_paise,
     valid_month,
+    weights_for,
 )
 from app.core.notify import notify
+from app.core.payments import accounting
 from app.database import get_db
 from app.models.notification import PAYOUT_PAID
 from app.models.partner import EarningLine, EarningMonth, PartnerApplication, Payout
+from app.models.payments import PAID_STATUSES, TIP, Payment
 from app.models.user import User
 from app.schemas.partner import (
     BalanceRow,
@@ -66,6 +69,7 @@ def _month_key(key: str) -> str:
 
 
 def _summary(key: str, row: Optional[EarningMonth]) -> MonthSummary:
+    member_weight, nonmember_weight = weights_for(row)
     return MonthSummary(
         month=key,
         pool_paise=row.pool_paise if row else 0,
@@ -75,6 +79,8 @@ def _summary(key: str, row: Optional[EarningMonth]) -> MonthSummary:
         ended=month_has_ended(key),
         total_points=row.total_points if row else 0,
         distributed_paise=row.distributed_paise if row else 0,
+        member_weight=member_weight,
+        nonmember_weight=nonmember_weight,
     )
 
 
@@ -95,6 +101,7 @@ def _detail(db: Session, key: str, row: Optional[EarningMonth], excluded: Option
                 responses=line.responses,
                 readers=line.readers,
                 points=line.points,
+                member_points=line.member_points or 0,
                 amount_paise=line.amount_paise,
                 held_reason=line.held_reason,
             )
@@ -109,6 +116,7 @@ def _detail(db: Session, key: str, row: Optional[EarningMonth], excluded: Option
         row.pool_paise if row else 0,
         row.max_per_point_paise if row else None,
         excluded,
+        weights_for(row),
     )
     people = _people(db, [item.tally.user_id for item in computed])
     rows = [
@@ -119,6 +127,7 @@ def _detail(db: Session, key: str, row: Optional[EarningMonth], excluded: Option
             responses=item.tally.responses,
             readers=item.tally.readers,
             points=item.tally.points,
+            member_points=item.tally.member_points,
             amount_paise=item.amount_paise,
             held_reason=item.held_reason,
             top_reader_pct=item.tally.top_reader_pct,
@@ -174,6 +183,8 @@ def set_pool(
         db.add(row)
     row.pool_paise = to_paise(payload.pool_rupees)
     row.max_per_point_paise = to_paise(payload.max_per_point_rupees) if payload.max_per_point_rupees is not None else None
+    row.member_weight = payload.member_weight
+    row.nonmember_weight = payload.nonmember_weight
     db.commit()
     db.refresh(row)
     return _detail(db, key, row)
@@ -221,6 +232,15 @@ def _balance_rows(db: Session, only: Optional[int] = None) -> List[BalanceRow]:
         .group_by(EarningLine.user_id)
         .all()
     )
+    tips = {
+        user_id: int(total or 0)
+        for user_id, total in db.query(
+            Payment.target_user_id, func.sum(Payment.writer_share_paise - Payment.refunded_primary_paise)
+        )
+        .filter(Payment.target_user_id.in_(ids), Payment.purpose == TIP, Payment.status.in_(PAID_STATUSES))
+        .group_by(Payment.target_user_id)
+        .all()
+    }
     paid = {
         user_id: (int(total or 0), last)
         for user_id, total, last in db.query(Payout.user_id, func.sum(Payout.amount_paise), func.max(Payout.paid_at))
@@ -231,7 +251,8 @@ def _balance_rows(db: Session, only: Optional[int] = None) -> List[BalanceRow]:
     minimum = settings.PARTNER_MIN_PAYOUT_RUPEES * 100
     rows = []
     for application in applications:
-        total_earned = int(earned.get(application.user_id) or 0)
+        tips_total = tips.get(application.user_id, 0)
+        total_earned = int(earned.get(application.user_id) or 0) + tips_total
         total_paid, last_paid = paid.get(application.user_id, (0, None))
         balance = total_earned - total_paid
         rows.append(
@@ -239,6 +260,7 @@ def _balance_rows(db: Session, only: Optional[int] = None) -> List[BalanceRow]:
                 user=Person.model_validate(application.user),
                 balance_paise=balance,
                 earned_paise=total_earned,
+                tips_paise=tips_total,
                 paid_paise=total_paid,
                 payout_upi=application.payout_upi,
                 due=balance >= minimum and balance > 0,
@@ -284,7 +306,10 @@ def record_payout(
         raise HTTPException(
             status_code=400, detail=f"भुगतान की राशि बकाया राशि ({_rupees(max(owed, 0))}) से अधिक नहीं हो सकती"
         )
-    db.add(Payout(user_id=payload.user_id, amount_paise=amount, reference=payload.reference, paid_by=admin.id, paid_at=utcnow()))
+    payout = Payout(user_id=payload.user_id, amount_paise=amount, reference=payload.reference, paid_by=admin.id, paid_at=utcnow())
+    db.add(payout)
+    db.flush()
+    accounting.record_payout(db, payout)  # the books and the payout change together or not at all
     db.commit()
     text = _rupees(amount) + (f" · {payload.reference}" if payload.reference else "")
     notify(db, actor_id=admin.id, kind=PAYOUT_PAID, recipient_id=payload.user_id, text=text)

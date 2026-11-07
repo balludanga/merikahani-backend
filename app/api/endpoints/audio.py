@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core import timing
+from app.core.blobstore import BlobMissing, NotConnected, audio_size, forget, read_audio, save_audio
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.content import PREVIEW_LIMIT
@@ -80,12 +81,18 @@ _jobs_lock = threading.Lock()
 _turn = threading.Semaphore(1)
 
 
-def _audio_response(audio: bytes, digest: str, request: Request) -> Response:
+def _audio_response(row: StoryAudio, digest: str, request: Request) -> Response:
     etag = f'"{digest[:32]}"'
     # private: the audio of a members-only story must never sit in a shared cache.
     headers = {"ETag": etag, "Cache-Control": "private, max-age=3600"}
     if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers=headers)
+        return Response(status_code=304, headers=headers)  # answered without touching wherever the file is kept
+    try:
+        audio = read_audio(row)
+    except (BlobMissing, NotConnected):
+        # The page treats this like any other "no server voice right now" and uses the browser's voice.
+        logger.exception("narration %s is recorded in the %s store but cannot be read", row.post_id, row.storage)
+        raise HTTPException(status_code=503, detail="सर्वर की आवाज़ अभी उपलब्ध नहीं है")
     return Response(content=audio, media_type="audio/mpeg", headers=headers)
 
 
@@ -123,17 +130,20 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
         try:
             row = db.query(StoryAudio).filter(StoryAudio.post_id == post_id).first()
             if row:
-                row.content_hash, row.voice, row.audio, row.chars = digest, voices, audio, chars
+                row.content_hash, row.voice, row.chars = digest, voices, chars
                 row.timings = timings_json
                 row.created_at = utcnow()
             else:
-                db.add(StoryAudio(post_id=post_id, content_hash=digest, voice=voices, audio=audio, chars=chars, timings=timings_json))
+                row = StoryAudio(post_id=post_id, content_hash=digest, voice=voices, chars=chars, timings=timings_json)
+                db.add(row)
+            replaced = save_audio(row, audio)  # into the database or the chosen store, and the row says which
             usage = db.query(TtsUsage).filter(TtsUsage.month == month).first()
             if usage:
                 usage.chars += chars
             else:
                 db.add(TtsUsage(month=month, chars=chars))
             db.commit()
+            forget(replaced)  # the file of the narration this one replaced, now that nothing points at it
         finally:
             db.close()
         with _jobs_lock:
@@ -195,7 +205,7 @@ def get_story_audio(
     post, content = _open_story(post_id, db, current_user)
     row, digest = _current_row(db, post, content)
     if row:
-        return _audio_response(row.audio, digest, request)
+        return _audio_response(row, digest, request)
 
     with _jobs_lock:
         job = _jobs.get(post_id)
@@ -247,7 +257,7 @@ def get_story_timings(
         except ValueError:
             data = None
     if data is None:
-        data = timing.estimate_timings(post.title or "", scan(content), len(row.audio) * 8 / 48000)
+        data = timing.estimate_timings(post.title or "", scan(content), audio_size(row) * 8 / 48000)
     if data is None:
         raise HTTPException(status_code=404, detail="समय की जानकारी उपलब्ध नहीं है")
     return JSONResponse(data, headers={"Cache-Control": "private, max-age=3600"})

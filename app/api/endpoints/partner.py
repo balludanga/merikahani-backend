@@ -36,7 +36,8 @@ from app.core.earnings import (
     engagement,
     month_bounds,
     share_out,
-    totals,
+    totals_split,
+    weights_for,
 )
 from app.core.notify import notify
 from app.core.partner import (
@@ -98,7 +99,10 @@ UPI_LIMIT = (10, 60 * 60)
 
 # ---------------------------------------------------------------- the writer
 
-def _rules() -> RulesOut:
+def _rules(db: Session) -> RulesOut:
+    member_weight, nonmember_weight = weights_for(
+        db.query(EarningMonth).filter(EarningMonth.month == current_month()).first()
+    )
     return RulesOut(
         min_followers=settings.PARTNER_MIN_FOLLOWERS,
         min_stories=settings.PARTNER_MIN_STORIES,
@@ -110,6 +114,8 @@ def _rules() -> RulesOut:
         reader_min_age_days=settings.PARTNER_READER_MIN_AGE_DAYS,
         reapply_days=settings.PARTNER_REAPPLY_DAYS,
         min_payout_paise=settings.PARTNER_MIN_PAYOUT_RUPEES * 100,
+        member_weight=member_weight,
+        nonmember_weight=nonmember_weight,
     )
 
 
@@ -126,15 +132,15 @@ def _status(db: Session, user: User) -> PartnerStatus:
         reapply_on=reapply_on(application),
         application=ApplicationOut.model_validate(application) if application else None,
         payout_upi=application.payout_upi if application else None,
-        rules=_rules(),
+        rules=_rules(db),
     )
 
 
 @router.get("/rules", response_model=RulesOut)
-def programme_rules():
+def programme_rules(db: Session = Depends(get_db)):
     """The numbers behind the programme. Public, so the page can quote them to a visitor who is
     not signed in; they are the same ones the server uses."""
-    return _rules()
+    return _rules(db)
 
 
 @router.get("/me", response_model=PartnerStatus)
@@ -197,7 +203,8 @@ def my_earnings(db: Session = Depends(get_db), current_user: User = Depends(get_
     application = get_application(db, current_user.id)
     if not _was_partner(application):
         raise HTTPException(status_code=403, detail=PARTNERS_ONLY)
-    earned, paid = totals(db, current_user.id)
+    pool_earned, tips_earned, paid = totals_split(db, current_user.id)
+    earned = pool_earned + tips_earned
 
     lines = (
         db.query(EarningLine, EarningMonth.month)
@@ -218,9 +225,9 @@ def my_earnings(db: Session = Depends(get_db), current_user: User = Depends(get_
     live = None
     if application.status == APPROVED:
         key = current_month()
-        tallies = engagement(db, key)
-        tally = tallies.get(current_user.id) or Tally(current_user.id)
         pool = db.query(EarningMonth).filter(EarningMonth.month == key).first()
+        tallies = engagement(db, key, *weights_for(pool))
+        tally = tallies.get(current_user.id) or Tally(current_user.id)
         estimate = None
         if pool is not None and pool.finalized_at is None and pool.pool_paise > 0:
             shares = share_out({uid: t.points for uid, t in tallies.items()}, pool.pool_paise, pool.max_per_point_paise)
@@ -232,6 +239,7 @@ def my_earnings(db: Session = Depends(get_db), current_user: User = Depends(get_
             responses=tally.responses,
             readers=tally.readers,
             points=tally.points,
+            member_points=tally.member_points,
             estimate_paise=estimate,
             ends_at=month_bounds(key)[1],
         )
@@ -239,6 +247,8 @@ def my_earnings(db: Session = Depends(get_db), current_user: User = Depends(get_
     return EarningsOut(
         balance_paise=earned - paid,
         earned_paise=earned,
+        pool_paise=pool_earned,
+        tips_paise=tips_earned,
         paid_paise=paid,
         live=live,
         months=[
@@ -249,6 +259,7 @@ def my_earnings(db: Session = Depends(get_db), current_user: User = Depends(get_
                 responses=line.responses,
                 readers=line.readers,
                 points=line.points,
+                member_points=line.member_points or 0,
                 amount_paise=line.amount_paise,
                 held_reason=line.held_reason,
             )

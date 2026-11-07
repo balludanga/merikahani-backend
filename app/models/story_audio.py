@@ -18,7 +18,13 @@ class StoryAudio(Base):
     post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True)
     content_hash = Column(String(64), nullable=False)
     voice = Column(String(60), nullable=False)
-    audio = Column(LargeBinary, nullable=False)
+    # The MP3 itself while ``storage`` is "db"; empty once it lives in an object store.
+    audio = Column(LargeBinary, nullable=True)
+    # Where the MP3 is: "db" (the column above), or the name of a store in app.core.blobstore.
+    storage = Column(String(12), nullable=False, default="db", server_default="db")
+    blob_key = Column(String(120), nullable=True)
+    # Length of the MP3 in bytes whichever way it is kept (its duration is derived from this).
+    size_bytes = Column(Integer, nullable=True)
     chars = Column(Integer, nullable=False, default=0)
     # When each word is spoken (JSON from app.core.timing), for the follow-along highlight.
     # Narrations made before this existed have none and get an estimate.

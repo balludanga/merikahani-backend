@@ -24,15 +24,18 @@ PARTNER_DECLINED = "partner_declined"
 PARTNER_REVOKED = "partner_revoked"
 PARTNER_ELIGIBLE = "partner_eligible"
 PAYOUT_PAID = "payout_paid"
+# A reader sent the writer a tip. (`count` holds the writer's share in paise.)
+TIP_RECEIVED = "tip"
 
 # About a person or the programme rather than a story, so they carry no post.
 POSTLESS = (
     FOLLOW, PARTNER_APPLIED, PARTNER_APPROVED, PARTNER_DECLINED, PARTNER_REVOKED, PARTNER_ELIGIBLE, PAYOUT_PAID,
+    TIP_RECEIVED,
 )
 # Said by the review team, never by the account of the reviewer who acted.
 REVIEW_TEAM_VOICE = (REVIEW_CHANGES, REVIEW_APPROVED, PARTNER_APPROVED, PARTNER_DECLINED, PARTNER_REVOKED)
-# Said by the site itself.
-SITE_VOICE = (PARTNER_ELIGIBLE, PAYOUT_PAID)
+# Said by the site itself. A tip is among them so an anonymous tipper's name never reaches the bell.
+SITE_VOICE = (PARTNER_ELIGIBLE, PAYOUT_PAID, TIP_RECEIVED)
 
 
 class Notification(Base):

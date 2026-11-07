@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import relationship
 
 from app.core.clock import utcnow
@@ -41,6 +41,8 @@ class PartnerApplication(Base):
     approved_at = Column(DateTime, nullable=True)
     # Where to pay. Private: only the writer and the review team ever read it.
     payout_upi = Column(String(80), nullable=True)
+    # Whether readers may send this writer a tip. On unless the writer switches it off.
+    accepts_tips = Column(Boolean, nullable=False, default=True, server_default=true())
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -58,6 +60,10 @@ class EarningMonth(Base):
     pool_paise = Column(Integer, nullable=False, default=0)
     # Ceiling on what one point can pay, so a tiny early community cannot drain a big pool.
     max_per_point_paise = Column(Integer, nullable=True)
+    # What a reader's reaction is worth this month, by whether the reader held a membership at that
+    # moment. Empty means the site-wide setting; fixed for good once the month is finalized.
+    member_weight = Column(Integer, nullable=True)
+    nonmember_weight = Column(Integer, nullable=True)
     finalized_at = Column(DateTime, nullable=True)
     finalized_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     # Frozen when the month is finalized.
@@ -83,6 +89,8 @@ class EarningLine(Base):
     responses = Column(Integer, nullable=False, default=0)
     readers = Column(Integer, nullable=False, default=0)
     points = Column(Integer, nullable=False, default=0)
+    # How many of those points came from readers who held a membership.
+    member_points = Column(Integer, nullable=False, default=0, server_default="0")
     amount_paise = Column(Integer, nullable=False, default=0)
     # Set when the review team left this writer out of the month; shown to the writer.
     held_reason = Column(Text, nullable=True)

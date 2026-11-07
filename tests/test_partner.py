@@ -15,6 +15,7 @@ from app.models.partner import EarningLine, EarningMonth, PartnerApplication, Pa
 from app.models.post import Post
 from app.models.user import User
 from tests.conftest import _register_and_login
+from tests.money_helpers import wipe_programme_books
 from tests.test_posts import _create_post
 
 ADMIN_EMAIL = "testuser@example.com"  # the address the mocked Google reply returns
@@ -28,6 +29,7 @@ def _admin_is_listed():
 
 
 def _wipe_programme():
+    wipe_programme_books()
     db = SessionLocal()
     try:
         for model in (Payout, EarningLine, EarningMonth, PartnerApplication):
@@ -47,7 +49,14 @@ def _clean_slate():
     db = SessionLocal()
     try:
         if _made_users:
-            db.query(Follow).filter(Follow.follower_id.in_(_made_users)).delete(synchronize_session=False)
+            # Everything that points at these accounts, in either direction, goes first: Postgres (unlike
+            # SQLite) refuses to delete a user that a follow or a notification still refers to.
+            db.query(Follow).filter(
+                Follow.follower_id.in_(_made_users) | Follow.following_id.in_(_made_users)
+            ).delete(synchronize_session=False)
+            db.query(Notification).filter(
+                Notification.actor_id.in_(_made_users) | Notification.user_id.in_(_made_users)
+            ).delete(synchronize_session=False)
             db.query(Clap).filter(Clap.user_id.in_(_made_users)).delete(synchronize_session=False)
             db.query(User).filter(User.id.in_(_made_users)).delete(synchronize_session=False)
             db.commit()
