@@ -138,6 +138,25 @@ def test_the_title_is_read_first(test_client, writer_a, gemini_on):
     assert gemini_on[0][0].turns[0].text.startswith("पहली बारिश")
 
 
+def test_a_signed_out_visitor_cannot_get_round_the_narration_limit_by_rewriting_the_forwarded_address(
+    test_client, writer_a, gemini_on
+):
+    """x-forwarded-for is whatever a caller writes when they reach the server directly. The address
+    Cloudflare saw (cf-connecting-ip) cannot be faked, so it backs the per-visitor limit up."""
+    posts = [_post(test_client, writer_a, SHORT, title=f"सीमा {i}") for i in range(4)]
+    codes = []
+    with patch.object(audio_endpoint, "GENERATIONS_PER_HOUR", 1), patch.object(audio_endpoint, "EDGE_LIMIT_FACTOR", 2):
+        for i, post in enumerate(posts):
+            response = test_client.get(
+                f"/api/audio/post/{post['id']}",
+                headers={"x-forwarded-for": f"203.0.113.{i}", "cf-connecting-ip": "198.51.100.7"},
+            )
+            codes.append(response.status_code)
+    assert codes == [202, 202, 429, 429], codes
+    for post in posts[:2]:  # let the two jobs that did start finish before the next test
+        assert _listen(test_client, post["id"]).status_code == 200
+
+
 def test_long_story_needs_sign_in_like_reading_does(test_client, writer_a, writer_b, gemini_on):
     post = _post(test_client, writer_a, LONG)
     assert test_client.get(f"/api/audio/post/{post['id']}").status_code == 401

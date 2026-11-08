@@ -5,8 +5,11 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 import base64
 import binascii
+import os
 import re
 import uuid
+from urllib.parse import urlparse
+from app.core.config import settings
 from app.database import get_db
 from app.models.post import Post
 from app.models.user import User
@@ -117,11 +120,29 @@ def decorate_posts(posts, user: Optional[User], db: Session):
     return posts
 
 
+def _own_hosts() -> set:
+    """The addresses this API is legitimately reached at: the site itself (Vercel forwards /api to us)
+    and the address Render gave this service."""
+    hosts = {(urlparse(settings.FRONTEND_URL).netloc or "").lower()}
+    render = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip().lower()
+    if render:
+        hosts.add(render)
+    hosts.discard("")
+    return hosts
+
+
 def public_base_url(request: Request) -> str:
-    """Scheme + host the caller used (Render/Vercel send the forwarded values)."""
+    """Scheme + host the caller used (Render/Vercel send the forwarded values).
+
+    The Host and X-Forwarded-Host headers are whatever the caller wrote when they reach this server
+    directly, and the links built from them end up in pages that are cached for an hour. So outside
+    development a host that is not one of this site's own is ignored and the site's address is used.
+    """
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{scheme}://{host.split(',')[0].strip()}"
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+    if not settings.debug and (scheme not in ("http", "https") or host.lower() not in _own_hosts()):
+        return settings.FRONTEND_URL.rstrip("/")
+    return f"{scheme}://{host}"
 
 
 def cover_url(request: Request, post: Post) -> str:
@@ -278,6 +299,13 @@ def get_post_cover(
         raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
     if not cover.startswith("data:"):
         if SELF_COVER_RE.search(cover):  # a stored link back to this endpoint would loop forever
+            raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
+        # Only a link into this site's own image storage is passed on. A writer can store any web
+        # address as a cover, and redirecting to it from here would make this address a signpost to
+        # any site they like, under the site's own name.
+        target = urlparse(cover)
+        own_storage = (urlparse(settings.SUPABASE_URL).hostname or "").lower()
+        if target.scheme != "https" or not own_storage or (target.hostname or "").lower() != own_storage:
             raise HTTPException(status_code=404, detail="कवर चित्र नहीं मिला")
         return Response(status_code=307, headers={"Location": cover})
     try:

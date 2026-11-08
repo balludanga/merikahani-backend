@@ -1,6 +1,6 @@
 from datetime import timedelta
 from typing import Optional
-from jose import jwt
+import jwt
 from passlib.context import CryptContext
 from app.core.clock import utcnow
 from app.core.config import settings

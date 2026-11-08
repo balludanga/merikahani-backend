@@ -4,8 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
 from app.core.security import decode_access_token
-from jose.exceptions import ExpiredSignatureError
-from jose import JWTError
+import jwt
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -18,13 +17,13 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     )
     try:
         payload = decode_access_token(token)
-    except ExpiredSignatureError:
+    except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="सत्र समाप्त हो गया है, कृपया दोबारा साइन इन करें",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except JWTError:
+    except jwt.PyJWTError:
         raise credentials_exception
     user_id_str = payload.get("sub")
     if user_id_str is None:

@@ -76,10 +76,24 @@ def _href_ok(value):
 
 
 def _embed_ok(value):
-    """https URL whose host is exactly an allowed host (or a subdomain of one)."""
+    """https URL whose host is exactly an allowed host (or a subdomain of one).
+
+    Python and a browser read a URL differently in one way that matters here: a browser treats
+    a backslash like a slash, Python does not. "https://evil.example\\@youtube.com/x" has the
+    host youtube.com to Python and the host evil.example to a browser, so the allowlist would
+    pass a page that loads from somewhere else. A URL carrying a backslash, a space or other
+    control character, user information or an unusual port is therefore refused outright
+    instead of being interpreted.
+    """
+    url = (value or "").strip()
+    if not url or any(ch == "\\" or ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        return False
     try:
-        parsed = urlparse((value or "").strip())
+        parsed = urlparse(url)
+        port = parsed.port
     except ValueError:
+        return False
+    if parsed.username is not None or parsed.password is not None or port not in (None, 443):
         return False
     host = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or not host:

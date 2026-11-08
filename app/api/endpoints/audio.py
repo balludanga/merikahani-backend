@@ -30,7 +30,7 @@ from app.core.content import PREVIEW_LIMIT
 from app.core.dependencies import get_current_user_optional
 from app.core.casting import plan_story
 from app.core.narration import DIALOGUE_STYLE, STYLE, fingerprint, scan, spoken_chars
-from app.core.ratelimit import actions, client_ip, enforce
+from app.core.ratelimit import EDGE_LIMIT_FACTOR, actions, client_ip, edge_ip, enforce
 from app.core.speech import SpeechUnavailable, is_available, synthesize
 from app.database import SessionLocal, get_db
 from app.models.post import Post
@@ -223,6 +223,13 @@ def get_story_audio(
             raise HTTPException(status_code=503, detail="सर्वर की आवाज़ अभी उपलब्ध नहीं है")
         key = f"tts:{current_user.id}" if current_user else f"tts-ip:{client_ip(request)}"
         enforce(actions, key, GENERATIONS_PER_HOUR, 3600, record=True)
+        if current_user is None:
+            # The first x-forwarded-for entry is whatever the caller wrote when they reach this server
+            # directly, so a visitor who changes it every time never meets the limit above, and could
+            # spend the month's speech allowance. The address Cloudflare saw cannot be faked; behind
+            # Vercel it is shared by every visitor, hence the larger allowance (the sign-in endpoints
+            # pair the two limits the same way).
+            enforce(actions, f"tts-edge:{edge_ip(request)}", GENERATIONS_PER_HOUR * EDGE_LIMIT_FACTOR, 3600, record=True)
         # Quotes are read as separate pieces, so the story's own length is close to what is sent.
         chars = len(content) + len(post.title or "")
         month = utcnow().strftime("%Y-%m")

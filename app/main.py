@@ -12,16 +12,42 @@ from app.core.config import settings
 from app.core.errorlog import describe, record_server_error
 from app.migrations import run_migrations
 
+# A signing key shorter than this is guessable. render.yaml generates a 44-character one and the
+# advice in .env.example (secrets.token_urlsafe(48)) gives 64.
+MIN_SECRET_KEY_LENGTH = 32
+
+
+def _is_placeholder_secret(key: str) -> bool:
+    """The sample values shipped in the repo, spelled with "-" or "_" (.env.example uses the latter)."""
+    normal = key.strip().lower().replace("_", "-")
+    return (
+        normal.startswith("your-secret")
+        or "change-in-production" in normal
+        or "changeme" in normal
+        or "change-me" in normal
+        or "secret-key-here" in normal
+    )
+
+
 def guard_production_secrets() -> None:
-    """Refuse to serve a production API on the sample secret.
+    """Refuse to serve a production API on a sample or guessable secret.
 
     DEBUG now fails closed, so an environment that never set it is treated as production:
-    the repo's placeholder key must not become a way to forge anyone's session.
+    a placeholder key (from this repo's config or .env.example) or a short one must not become
+    a way to forge anyone's session, the owner's included.
     """
-    if not settings.debug and settings.SECRET_KEY.startswith("your-secret-key"):
+    if settings.debug:
+        return
+    key = settings.SECRET_KEY or ""
+    if _is_placeholder_secret(key):
         raise RuntimeError(
             "SECRET_KEY must be set to a private random value when DEBUG is off "
             "(run locally with: DEBUG=true uvicorn app.main:app --reload)"
+        )
+    if len(key) < MIN_SECRET_KEY_LENGTH:
+        raise RuntimeError(
+            f"SECRET_KEY is too short ({len(key)} characters): use at least {MIN_SECRET_KEY_LENGTH} random ones, "
+            'for example: python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
 
 
@@ -159,7 +185,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL.rstrip("/")] + (settings.ALLOW_ORIGINS if settings.debug else []),
     allow_origin_regex=r"https://lekhanii(-[a-z0-9-]+)?\.vercel\.app",
-    allow_credentials=True,
+    # Sign-in travels in the Authorization header, never in a cookie, so no browser request to this
+    # API needs credentials mode. The regex above admits any "lekhanii-*" project on Vercel (anyone
+    # can create one), which is only harmless while no cookie can ride along with the request.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     # Starlette rejects a preflight carrying Access-Control-Request-Private-Network with
