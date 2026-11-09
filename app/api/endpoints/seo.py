@@ -84,7 +84,7 @@ def generate_rss(db: Session = Depends(get_db)):
     rss += '  <channel>\n'
     rss += '    <title>लेखनी — हिंदी लेखकों का अपना मंच</title>\n'
     rss += f'    <link>{base_url}</link>\n'
-    rss += '    <description>हिंदी में कहानी, कविता, निबंध और संस्मरण — मानवीय लेखन का घर</description>\n'
+    rss += '    <description>हिंदी में कहानी, कविता, निबंध और संस्मरण। हर रचना इंसान की लिखी।</description>\n'
     rss += '    <language>hi</language>\n'
     rss += f'    <lastBuildDate>{utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")}</lastBuildDate>\n'
     rss += f'    <atom:link href="{base_url}/rss.xml" rel="self" type="application/rss+xml"/>\n'
