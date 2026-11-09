@@ -207,11 +207,18 @@ class ExtraResponseHeaders(BaseHTTPMiddleware):
     any *non*-preflight response that carried the marker: CORSMiddleware answers the preflight
     itself (see ``allow_private_network`` above), so this only covers the rarer case of a request
     that sends the marker without being an OPTIONS preflight.
+
+    ``X-Content-Type-Options: nosniff`` stops a browser from guessing a different type than the
+    one we declared (a JSON or image answer is never run as a script or page), and
+    ``Referrer-Policy`` is spelled out rather than left to each browser's default. The Vercel site
+    sends the same two, but this server can also be opened directly on its own address.
     """
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         if request.headers.get("access-control-request-private-network"):
             response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response

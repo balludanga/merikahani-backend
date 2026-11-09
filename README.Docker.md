@@ -48,6 +48,21 @@ To move an existing `app.db` from before this change:
 docker compose cp ./app.db backend:/app/data/app.db
 ```
 
+## Runs as a normal user, not root
+
+The server inside the container runs as user `10001` and can only write to `/app/data`. The code
+itself is read-only to it, and the image has no compiler. Docker has a built-in health check
+(`docker ps` shows `healthy`) that asks the root page for an answer.
+
+If you already have a `lekhani-db` volume made by an older image (when the server ran as root), it is
+owned by root and the server can no longer write to it. Hand it over once:
+
+```bash
+docker compose run --rm --user root backend chown -R 10001:10001 /app/data
+```
+
+A volume created from scratch needs nothing.
+
 ## Environment Variables
 
 Copy `.env.example` to `.env` and adjust. The compose file sets `DEBUG=true` and a SQLite

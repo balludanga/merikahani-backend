@@ -198,3 +198,23 @@ def test_cors_does_not_allow_credentials_but_still_allows_the_sign_in_header(tes
     assert "access-control-allow-credentials" not in preflight.headers
     plain = test_client.get("/api/posts", headers={"Origin": origin})
     assert "access-control-allow-credentials" not in plain.headers
+
+
+# --- response headers: the server can be opened directly, not only through the Vercel site -------
+
+
+@pytest.mark.parametrize("path", ["/", "/api/posts", "/api/auth/me", "/api/does-not-exist", "/api/rss.xml"])
+def test_every_kind_of_answer_carries_nosniff_and_a_referrer_policy(test_client, path):
+    # a normal answer, a 401, a 404 and an XML feed: none may be left for a browser to guess at
+    answer = test_client.get(path)
+    assert answer.headers["x-content-type-options"] == "nosniff"
+    assert answer.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+
+
+def test_the_cors_preflight_carries_them_too(test_client):
+    origin = settings.FRONTEND_URL.rstrip("/")
+    preflight = test_client.options(
+        "/api/posts", headers={"Origin": origin, "Access-Control-Request-Method": "GET"}
+    )
+    assert preflight.headers["x-content-type-options"] == "nosniff"
+    assert preflight.headers["referrer-policy"] == "strict-origin-when-cross-origin"
