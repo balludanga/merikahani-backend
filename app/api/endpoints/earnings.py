@@ -11,8 +11,10 @@ How it goes, once a month:
   4. Pay each partner by UPI yourself and record it (``POST /payouts``). A payout can never be
      larger than what the writer is owed.
 
-Only the review team (ADMIN_EMAILS verified by Google) can reach any of this; everyone else gets
-the same 404 a made-up address gets. Nobody can record a payout to themselves.
+The review team (ADMIN_EMAILS verified by Google) may read each month's pool and result and the
+payout history. Only the owner (OWNER_EMAILS verified by Google) may act on money: set a pool,
+finalize a month, record a payout, or list what each writer is owed. Everyone else gets the same 404
+a made-up address gets. Nobody can record a payout to themselves.
 """
 
 from typing import Dict, List, Optional
@@ -21,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.admin import require_admin
+from app.core.admin import require_admin, require_owner
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.earnings import (
@@ -171,9 +173,9 @@ def set_pool(
     month: str,
     payload: PoolRequest,
     db: Session = Depends(get_db),
-    _admin: User = Depends(require_admin),
+    _owner: User = Depends(require_owner),
 ):
-    """Set (or change) the money to be shared for a month that is not final yet."""
+    """Set (or change) the money to be shared for a month that is not final yet. Owner only."""
     key = _month_key(month)
     row = db.query(EarningMonth).filter(EarningMonth.month == key).with_for_update().first()
     if row is not None and row.finalized_at is not None:
@@ -195,9 +197,9 @@ def finalize(
     month: str,
     payload: FinalizeRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    owner: User = Depends(require_owner),
 ):
-    """Store the month's result. After this the pool, the points and the shares no longer change."""
+    """Store the month's result. After this the pool, the points and the shares no longer change. Owner only."""
     key = _month_key(month)
     row = db.query(EarningMonth).filter(EarningMonth.month == key).with_for_update().first()
     if row is None:
@@ -206,7 +208,7 @@ def finalize(
         raise HTTPException(status_code=400, detail=SETTLED)
     if not month_has_ended(key):
         raise HTTPException(status_code=400, detail="यह महीना अभी पूरा नहीं हुआ है")
-    finalize_month(db, row, admin.id, {item.user_id: item.reason for item in payload.exclude})
+    finalize_month(db, row, owner.id, {item.user_id: item.reason for item in payload.exclude})
     db.commit()
     db.refresh(row)
     return _detail(db, key, row)
@@ -272,8 +274,8 @@ def _balance_rows(db: Session, only: Optional[int] = None) -> List[BalanceRow]:
 
 
 @router.get("/balances", response_model=List[BalanceRow])
-def balances(db: Session = Depends(get_db), _admin: User = Depends(require_admin)):
-    """Every partner (and former partner) with what they are owed, biggest first."""
+def balances(db: Session = Depends(get_db), _owner: User = Depends(require_owner)):
+    """Every partner (and former partner) with what they are owed, biggest first. Owner only."""
     return _balance_rows(db)
 
 
@@ -286,10 +288,10 @@ def _rupees(paise: int) -> str:
 def record_payout(
     payload: PayoutRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    owner: User = Depends(require_owner),
 ):
-    """Note that money was sent. It can never exceed what the writer is owed."""
-    if payload.user_id == admin.id:
+    """Note that money was sent. It can never exceed what the writer is owed. Owner only."""
+    if payload.user_id == owner.id:
         raise HTTPException(status_code=400, detail="अपने खाते का भुगतान आप स्वयं दर्ज नहीं कर सकते")
     # Two payouts recorded at once must not both pass the balance check: lock the writer's row.
     application = (
@@ -306,13 +308,13 @@ def record_payout(
         raise HTTPException(
             status_code=400, detail=f"भुगतान की राशि बकाया राशि ({_rupees(max(owed, 0))}) से अधिक नहीं हो सकती"
         )
-    payout = Payout(user_id=payload.user_id, amount_paise=amount, reference=payload.reference, paid_by=admin.id, paid_at=utcnow())
+    payout = Payout(user_id=payload.user_id, amount_paise=amount, reference=payload.reference, paid_by=owner.id, paid_at=utcnow())
     db.add(payout)
     db.flush()
     accounting.record_payout(db, payout)  # the books and the payout change together or not at all
     db.commit()
     text = _rupees(amount) + (f" · {payload.reference}" if payload.reference else "")
-    notify(db, actor_id=admin.id, kind=PAYOUT_PAID, recipient_id=payload.user_id, text=text)
+    notify(db, actor_id=owner.id, kind=PAYOUT_PAID, recipient_id=payload.user_id, text=text)
     return _balance_rows(db, only=payload.user_id)[0]
 
 

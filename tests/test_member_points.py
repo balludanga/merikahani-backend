@@ -26,7 +26,8 @@ _made_users = []
 
 @pytest.fixture(autouse=True)
 def _admin_is_listed():
-    with patch("app.core.admin.settings.ADMIN_EMAILS", ADMIN_EMAIL):
+    # The money routes are the owner's, so this address is the owner too.
+    with patch("app.core.admin.settings.ADMIN_EMAILS", ADMIN_EMAIL), patch("app.core.admin.settings.OWNER_EMAILS", ADMIN_EMAIL):
         yield
 
 

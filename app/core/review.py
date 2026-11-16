@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 def reviewers(db: Session) -> List[User]:
-    """The accounts allowed to review: listed in ADMIN_EMAILS and verified by Google."""
-    emails = admin_emails()
+    """The accounts allowed to review: listed in ADMIN_EMAILS or added by the owner, and verified by Google."""
+    emails = admin_emails(db)
     if not emails:
         return []
     return db.query(User).filter(func.lower(User.email).in_(emails), User.email_verified.is_(True)).all()

@@ -133,6 +133,37 @@ def test_an_owner_is_also_a_reviewer_and_a_reviewer_is_not_an_owner(test_client,
     assert test_client.get("/api/earnings/months", headers=reviewer["headers"]).status_code == 200
 
 
+def test_reviewers_may_read_the_months_but_only_the_owner_acts_on_money(test_client, owner, reviewer):
+    writer = partner_writer(test_client)
+    month = "2026-05"
+    reads = [("get", "/months", None), ("get", f"/months/{month}", None), ("get", "/payouts", None)]
+    acts = [
+        ("put", f"/months/{month}", {"pool_rupees": 10}),
+        ("post", f"/months/{month}/finalize", {}),
+        ("get", "/balances", None),
+        ("post", "/payouts", {"user_id": writer["user"]["id"], "amount_rupees": 10}),
+    ]
+
+    def call(who, method, path, body):
+        kwargs = {"json": body} if body is not None else {}
+        return getattr(test_client, method)(f"/api/earnings{path}", headers=who["headers"], **kwargs)
+
+    for method, path, body in reads:  # a reviewer reads what the review team has always read ...
+        assert call(reviewer, method, path, body).status_code == 200, path
+    for method, path, body in acts:  # ... but cannot set a pool, finalize, list what is owed, or record a payout
+        response = call(reviewer, method, path, body)
+        assert response.status_code == 404 and response.json() == {"detail": "Not Found"}, path
+    # Nothing the reviewer tried left a trace.
+    with SessionLocal() as db:
+        assert db.query(EarningMonth).filter(EarningMonth.month == month).first() is None
+        assert db.query(Payout).count() == 0
+
+    assert call(owner, "put", f"/months/{month}", {"pool_rupees": 10}).status_code == 200
+    assert call(owner, "get", "/balances", None).status_code == 200
+    with SessionLocal() as db:
+        assert db.query(EarningMonth).filter(EarningMonth.month == month).first().pool_paise == 1000
+
+
 def test_the_owners_settings_appear_in_nothing_anyone_else_can_read(test_client, owner, reviewer):
     writer = partner_writer(test_client)
     add_entry(test_client, owner, "income_sponsor", "777", "2026-06-10", "निजी आय")  # a month with real figures of its own
@@ -141,7 +172,6 @@ def test_the_owners_settings_appear_in_nothing_anyone_else_can_read(test_client,
     responses = [
         test_client.get("/api/earnings/months", headers=reviewer["headers"]),
         test_client.get("/api/earnings/months/2026-06", headers=reviewer["headers"]),
-        test_client.get("/api/earnings/balances", headers=reviewer["headers"]),
         test_client.get("/api/earnings/payouts", headers=reviewer["headers"]),
         test_client.get("/api/partner/rules"),
         test_client.get("/api/partner/me", headers=writer["headers"]),
@@ -238,12 +268,13 @@ def test_the_choice_is_validated_and_can_be_cleared(test_client, owner):
 def test_applying_the_suggestion_sets_only_the_pool(test_client, owner, reviewer):
     seed_september(test_client, owner)
     go(test_client, owner, "put", "/profit/2025-09", json={"pool_percent": 40, "holdback_percent": 10})
-    reviewer_set = test_client.put(
+    # The pool is set by hand on the desk first (by the owner: a reviewer can no longer do this).
+    desk_set = test_client.put(
         "/api/earnings/months/2025-09",
         json={"pool_rupees": 5, "max_per_point_rupees": 2, "member_weight": 2, "nonmember_weight": 1},
-        headers=reviewer["headers"],
+        headers=owner["headers"],
     )
-    assert reviewer_set.status_code == 200
+    assert desk_set.status_code == 200
 
     applied = go(test_client, owner, "post", "/profit/2025-09/apply").json()
     assert applied["pool_set"] == 613_800

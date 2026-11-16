@@ -39,7 +39,9 @@ ADMIN_EMAIL = "testuser@example.com"  # the address the mocked Google reply retu
 
 @pytest.fixture(autouse=True)
 def _sandbox_is_the_provider():
-    with patch.object(settings, "PAYMENTS_PROVIDER", "sandbox"), patch("app.core.admin.settings.ADMIN_EMAILS", ADMIN_EMAIL):
+    with patch.object(settings, "PAYMENTS_PROVIDER", "sandbox"), patch("app.core.admin.settings.ADMIN_EMAILS", ADMIN_EMAIL), patch(
+        "app.core.admin.settings.OWNER_EMAILS", ADMIN_EMAIL
+    ):  # the money routes are the owner's, so this address is the owner too
         yield
 
 

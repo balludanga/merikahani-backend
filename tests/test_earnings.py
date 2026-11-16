@@ -35,7 +35,8 @@ _made_users = []  # readers created straight in the database, removed at the end
 
 @pytest.fixture(autouse=True)
 def _admin_is_listed():
-    with patch("app.core.admin.settings.ADMIN_EMAILS", ADMIN_EMAIL):
+    # The money routes (set a pool, finalize, pay out) are the owner's, so this address is the owner too.
+    with patch("app.core.admin.settings.ADMIN_EMAILS", ADMIN_EMAIL), patch("app.core.admin.settings.OWNER_EMAILS", ADMIN_EMAIL):
         yield
 
 
