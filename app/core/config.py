@@ -154,6 +154,14 @@ class Settings(BaseSettings):
     # Public frontend URL (used for sitemap / RSS links)
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://lekhanii.vercel.app")
 
+    # Which websites' pages may call this API from a browser. Only the site itself (FRONTEND_URL) is allowed
+    # by default. When the site moves to a new domain, change FRONTEND_URL; to keep the old address working
+    # for a while, list it here (comma-separated, exact addresses with https://, no "*"). CORS_ORIGIN_REGEX is
+    # for a family of addresses such as Vercel's test links and must name your own Vercel account, e.g.
+    # https://lekhanii-[a-z0-9-]+-youraccount\.vercel\.app ; empty means none. (See app/main.py.)
+    CORS_EXTRA_ORIGINS: str = os.getenv("CORS_EXTRA_ORIGINS", "")
+    CORS_ORIGIN_REGEX: str = os.getenv("CORS_ORIGIN_REGEX", "")
+
     # CORS - allow both local and production domains
     # Local dev origins; main.py only honours these when DEBUG is on.
     ALLOW_ORIGINS: List[str] = [

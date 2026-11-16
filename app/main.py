@@ -3,6 +3,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 import json
+import re
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
@@ -60,8 +61,59 @@ def guard_payments_config() -> None:
         )
 
 
+def extra_cors_origins() -> list:
+    """CORS_EXTRA_ORIGINS as a clean list of exact origins."""
+    return [item.strip().rstrip("/") for item in (settings.CORS_EXTRA_ORIGINS or "").split(",") if item.strip()]
+
+
+def guard_cors_config() -> None:
+    """Refuse to start on a CORS setting that would open the API to every website.
+
+    The extra origins must be exact web addresses (never "*"), and the optional pattern must not be one
+    that matches an address nobody could own the right to: a mistake such as ".*" would put every site on
+    the internet on the guest list.
+    """
+    for origin in extra_cors_origins():
+        if not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d+)?", origin):
+            raise RuntimeError(f"CORS_EXTRA_ORIGINS entry {origin!r} must be an exact address like https://example.com")
+    pattern = (settings.CORS_ORIGIN_REGEX or "").strip()
+    if pattern:
+        try:
+            compiled = re.compile(pattern)
+        except re.error as error:
+            raise RuntimeError(f"CORS_ORIGIN_REGEX is not a valid pattern: {error}")
+        strangers = (
+            "https://stranger.example", "https://lekhanii-evil.example", "http://localhost:9",
+            "https://stranger.vercel.app", "https://lekhanii-evil.vercel.app",
+        )
+        for stranger in strangers:
+            if compiled.fullmatch(stranger):
+                raise RuntimeError("CORS_ORIGIN_REGEX is too wide: it matches addresses that are not yours")
+
+
+def install_cors(target: FastAPI) -> None:
+    """Add the CORS rule to ``target``: the site itself (FRONTEND_URL), the exact extra origins from the
+    settings, an optional pattern from the settings, and the localhost dev origins only when DEBUG is on."""
+    target.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.FRONTEND_URL.rstrip("/")] + extra_cors_origins() + (settings.ALLOW_ORIGINS if settings.debug else []),
+        allow_origin_regex=(settings.CORS_ORIGIN_REGEX or "").strip() or None,
+        # Sign-in travels in the Authorization header, never in a cookie, so no browser request to this
+        # API needs credentials mode.
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        # Starlette rejects a preflight carrying Access-Control-Request-Private-Network with
+        # "400 Disallowed CORS private-network" unless this is said out loud, and it answers
+        # preflights itself without ever calling the middleware below. Without the flag the
+        # browser is told "no" before a page on a public origin can reach this server on a LAN.
+        allow_private_network=True,
+    )
+
+
 guard_production_secrets()
 guard_payments_config()
+guard_cors_config()
 
 # Bring the schema up to date (creates tables, adds columns/indexes, backfills) before serving.
 run_migrations()
@@ -180,23 +232,8 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
         content={"detail": "यह जानकारी पहले से मौजूद है या बदल चुकी है, कृपया दोबारा कोशिश करें"},
     )
 
-# CORS: our own frontend, this project's Vercel previews, and local dev when DEBUG is on.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL.rstrip("/")] + (settings.ALLOW_ORIGINS if settings.debug else []),
-    allow_origin_regex=r"https://lekhanii(-[a-z0-9-]+)?\.vercel\.app",
-    # Sign-in travels in the Authorization header, never in a cookie, so no browser request to this
-    # API needs credentials mode. The regex above admits any "lekhanii-*" project on Vercel (anyone
-    # can create one), which is only harmless while no cookie can ride along with the request.
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    # Starlette rejects a preflight carrying Access-Control-Request-Private-Network with
-    # "400 Disallowed CORS private-network" unless this is said out loud, and it answers
-    # preflights itself without ever calling the middleware below. Without the flag the
-    # browser is told "no" before a page on a public origin can reach this server on a LAN.
-    allow_private_network=True,
-)
+# CORS: our own frontend (FRONTEND_URL) and whatever the settings add; local dev when DEBUG is on.
+install_cors(app)
 
 
 class ExtraResponseHeaders(BaseHTTPMiddleware):
