@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.models.session import RevokedSession
 from app.models.user import User
 from app.core.security import decode_access_token
 import jwt
@@ -27,6 +28,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     user_id_str = payload.get("sub")
     if user_id_str is None:
+        raise credentials_exception
+    # A sign-in that was ended with "sign out" on its device (tokens from before sessions had ids carry none).
+    session_id = payload.get("sid")
+    if session_id and db.query(RevokedSession.sid).filter(RevokedSession.sid == str(session_id)).first():
         raise credentials_exception
     try:
         user_id = int(user_id_str)

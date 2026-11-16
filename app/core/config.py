@@ -24,7 +24,12 @@ class Settings(BaseSettings):
         "your-secret-key-here-change-in-production"
     )
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # A sign-in stays good for this many days without being used. The app renews it when it is opened and
+    # about once a day while it stays open (POST /api/auth/refresh), so whoever keeps coming back never has
+    # to sign in again. SESSION_MAX_DAYS is the longest a sign-in may be renewed, counted from the real
+    # password / Google sign-in: after that the person signs in once more.
+    SESSION_IDLE_DAYS: int = int(os.getenv("SESSION_IDLE_DAYS", "30"))
+    SESSION_MAX_DAYS: int = int(os.getenv("SESSION_MAX_DAYS", "180"))
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "YOUR_GOOGLE_CLIENT_ID")

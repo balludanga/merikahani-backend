@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
 from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -11,12 +11,13 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from datetime import timedelta
-from app.core.clock import utcnow
+from app.core.clock import epoch_seconds, from_timestamp, utcnow
 from app.database import get_db
+from app.models.session import RevokedSession
 from app.models.user import User
-from app.core.security import DUMMY_HASH, get_password_hash, create_access_token, verify_password
+from app.core.security import DUMMY_HASH, get_password_hash, create_access_token, decode_access_token, verify_password
 from app.core.config import settings
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, oauth2_scheme
 from app.core.ratelimit import (
     EDGE_LIMIT_FACTOR, LOGIN_FAILURE_LIMIT, LOGIN_IP_LIMIT, LOGIN_WINDOW, REGISTER_IP_LIMIT, REGISTER_WINDOW,
     client_ip, edge_ip, enforce, ip_attempts, login_failures, registrations,
@@ -110,10 +111,27 @@ def _unique_username(db: Session, base: str) -> str:
     return candidate
 
 
-def _token_response(user: User) -> dict:
+DAY = 24 * 60 * 60
+
+
+def _token_response(user: User, signed_in_at: Optional[int] = None, session_id: Optional[str] = None) -> dict:
+    """A sign-in token that lasts SESSION_IDLE_DAYS and carries three extra claims: ``sid``, a random id
+    for this sign-in (one per device; kept as the token is renewed, and what "sign out" revokes), ``ia``,
+    when the person really signed in (Unix seconds, kept as well), and ``ra``, when this token was issued
+    (the app reads it to know when a renewal is due). The token never outlives ``ia`` + SESSION_MAX_DAYS,
+    so renewing cannot keep a stolen token alive for ever."""
+    now = int(epoch_seconds())
+    started = now if signed_in_at is None else min(signed_in_at, now)
+    expires = min(now + settings.SESSION_IDLE_DAYS * DAY, started + settings.SESSION_MAX_DAYS * DAY)
     access_token = create_access_token(
-        data={"sub": str(user.id), "tv": user.token_version or 0},
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        data={
+            "sub": str(user.id),
+            "tv": user.token_version or 0,
+            "sid": session_id or secrets.token_urlsafe(16),
+            "ia": started,
+            "ra": now,
+        },
+        expires_delta=timedelta(seconds=max(expires - now, 0)),
     )
     return {"access_token": access_token, "token_type": "bearer", "user": user}
 
@@ -225,6 +243,68 @@ def login(user_data: UserLogin, request: Request, db: Session = Depends(get_db))
         raise HTTPException(status_code=401, detail="ईमेल या पासवर्ड गलत है")
     login_failures.reset(failure_key)
     return _token_response(user)
+
+
+@router.post("/refresh", response_model=Token)
+def refresh(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user),
+):
+    """Swap a still-valid sign-in token for a fresh one, so someone who keeps coming back stays signed in.
+
+    The old token has to be valid (not expired, not signed out, not retired by a takeover): an expired
+    one cannot be revived. The new token keeps the original sign-in time, which bounds the whole chain
+    to SESSION_MAX_DAYS.
+    """
+    enforce(ip_attempts, f"refresh:{client_ip(request)}", LOGIN_IP_LIMIT, LOGIN_WINDOW, record=True)
+    enforce(ip_attempts, f"refresh-edge:{edge_ip(request)}", LOGIN_IP_LIMIT * EDGE_LIMIT_FACTOR, LOGIN_WINDOW, record=True)
+    claims = decode_access_token(token)  # get_current_user has just proved it valid
+    started = claims.get("ia")
+    # Tokens issued before renewal existed carry no "ia": they are at most a few minutes old, so now will do.
+    started = started if isinstance(started, int) else None
+    if started is not None and epoch_seconds() >= started + settings.SESSION_MAX_DAYS * DAY:
+        raise HTTPException(
+            status_code=401,
+            detail="सत्र समाप्त हो गया है, कृपया दोबारा साइन इन करें",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    session_id = claims.get("sid")
+    return _token_response(
+        current_user, signed_in_at=started, session_id=session_id if isinstance(session_id, str) else None
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sign out for real, on this device only: this sign-in (and every renewal of it) stops working, while
+    the same account stays signed in on other devices.
+
+    Sign-ins now last weeks, so deleting the token from the browser is not enough: a copy that leaked
+    would stay good. Each sign-in has its own id, and the id is what gets revoked.
+    """
+    claims = decode_access_token(token)  # get_current_user has just proved it valid
+    session_id = claims.get("sid")
+    if isinstance(session_id, str) and session_id:
+        started = claims.get("ia")
+        started = started if isinstance(started, int) else int(epoch_seconds())
+        # The id has to stay refused for as long as any renewal of this sign-in could still be alive.
+        db.query(RevokedSession).filter(RevokedSession.expires_at < utcnow()).delete(synchronize_session=False)
+        db.add(RevokedSession(sid=session_id, expires_at=from_timestamp(started + settings.SESSION_MAX_DAYS * DAY)))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()  # another tab signed this one out a moment ago: nothing left to do
+    else:
+        # A token from before sign-ins had ids (30 minutes at most, so only just after this was
+        # deployed). It cannot be told apart from the account's other tokens: end them all.
+        current_user.token_version = (current_user.token_version or 0) + 1
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserResponse)
