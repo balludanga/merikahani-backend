@@ -15,8 +15,10 @@ The pool for the month is split in proportion to points. Money is whole paise th
 split uses the largest-remainder method, so the shares always add up to the pool to the paisa.
 
 What never counts: the writer's own actions; a reader whose account was younger than
-PARTNER_READER_MIN_AGE_DAYS when they acted (new accounts cost nothing to make); anything from
-before the writer became a partner; anything on a story that is not public. A deleted response or
+PARTNER_READER_MIN_AGE_DAYS when they acted (new accounts cost nothing to make); a reader whose email
+address is not verified, unless they held a paid membership when they acted (an account anyone can make
+in a minute must not be able to move a share of the pool, but someone who paid is not a fake); anything
+from before the writer became a partner; anything on a story that is not public. A deleted response or
 highlight is gone from its table, so it stops counting by itself.
 
 Months are calendar months in Indian time, because that is how writers and the owner think of them.
@@ -164,12 +166,15 @@ def engagement(
     grown_up = timedelta(days=settings.PARTNER_READER_MIN_AGE_DAYS)
     was_member = membership_lookup(db, start, end)
 
-    def counts(author_id: int, reader_id: int, reader_since: Optional[datetime], at: datetime) -> bool:
+    def counts(
+        author_id: int, reader_id: int, reader_since: Optional[datetime], verified: bool, at: datetime
+    ) -> bool:
         return (
             reader_id != author_id
             and reader_since is not None
             and reader_since <= at - grown_up
             and at >= members[author_id]
+            and (bool(verified) or was_member(reader_id, at))
         )
 
     def weigh(reader_id: int, at: datetime) -> Tuple[int, bool]:
@@ -177,14 +182,14 @@ def engagement(
         member = was_member(reader_id, at)
         return (member_weight if member else nonmember_weight), member
 
-    for author_id, reader_id, at, since in (
-        db.query(Post.author_id, Clap.user_id, Clap.created_at, User.created_at)
+    for author_id, reader_id, at, since, verified in (
+        db.query(Post.author_id, Clap.user_id, Clap.created_at, User.created_at, User.email_verified)
         .select_from(Clap)
         .join(Post, Post.id == Clap.post_id)
         .join(User, User.id == Clap.user_id)
         .filter(Post.published == 1, Post.author_id.in_(authors), Clap.created_at >= start, Clap.created_at < end)
     ):
-        if counts(author_id, reader_id, since, at):
+        if counts(author_id, reader_id, since, verified, at):
             weight, member = weigh(reader_id, at)
             tallies[author_id].add(reader_id, "claps", 1, weight, member)
 
@@ -194,7 +199,10 @@ def engagement(
         (
             "highlights",
             MAX_HIGHLIGHTS,
-            db.query(Post.author_id, Highlight.user_id, Highlight.post_id, Highlight.created_at, User.created_at)
+            db.query(
+                Post.author_id, Highlight.user_id, Highlight.post_id, Highlight.created_at, User.created_at,
+                User.email_verified,
+            )
             .select_from(Highlight)
             .join(Post, Post.id == Highlight.post_id)
             .join(User, User.id == Highlight.user_id)
@@ -208,7 +216,10 @@ def engagement(
         (
             "responses",
             MAX_RESPONSES,
-            db.query(Post.author_id, Comment.author_id, Comment.post_id, Comment.created_at, User.created_at)
+            db.query(
+                Post.author_id, Comment.author_id, Comment.post_id, Comment.created_at, User.created_at,
+                User.email_verified,
+            )
             .select_from(Comment)
             .join(Post, Post.id == Comment.post_id)
             .join(User, User.id == Comment.author_id)
@@ -221,8 +232,8 @@ def engagement(
         ),
     ):
         groups: Dict[Tuple[int, int, int], List[datetime]] = {}
-        for author_id, reader_id, post_id, at, since in rows:
-            if counts(author_id, reader_id, since, at):
+        for author_id, reader_id, post_id, at, since, verified in rows:
+            if counts(author_id, reader_id, since, verified, at):
                 groups.setdefault((author_id, reader_id, post_id), []).append(at)
         for (author_id, reader_id, _post_id), times in groups.items():
             for at in sorted(times)[:cap]:

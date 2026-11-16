@@ -20,7 +20,7 @@ FOLLOW_LIMIT = (200, 60 * 60)
 
 
 def _get_target_user(db: Session, user_id: int) -> User:
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not user:
         raise HTTPException(status_code=404, detail="लेखक नहीं मिला")
     return user

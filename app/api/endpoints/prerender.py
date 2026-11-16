@@ -400,7 +400,7 @@ def prerender_tag(slug: str, db: Session = Depends(get_db)):
 @router.get("/user/{user_id}")
 def prerender_user(user_id: int, db: Session = Depends(get_db)):
     base_url = settings.FRONTEND_URL.rstrip("/")
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not user:
         return _not_found(base_url)
     posts = (

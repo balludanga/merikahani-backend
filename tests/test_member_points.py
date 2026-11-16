@@ -72,11 +72,14 @@ def at(month, day, hour=12, year=2025):
     return datetime(year, month, day, hour)
 
 
-def established_reader():
+def established_reader(verified=True):
     db = SessionLocal()
     try:
         tag = uuid.uuid4().hex[:8]
-        user = User(email=f"mp{tag}@example.com", username=f"mp{tag}", hashed_password="x", created_at=datetime(2024, 6, 1))
+        user = User(
+            email=f"mp{tag}@example.com", username=f"mp{tag}", hashed_password="x", created_at=datetime(2024, 6, 1),
+            email_verified=verified,
+        )
         db.add(user)
         db.commit()
         _made_users.append(user.id)
@@ -140,6 +143,22 @@ def test_the_default_changes_nothing(test_client):
         assert weights_for(None) == (1, 1) == (settings.POINTS_MEMBER_WEIGHT, settings.POINTS_NONMEMBER_WEIGHT)
     t = tally("2025-03", who["user"]["id"])
     assert t.claps == 2 and t.points == 2 and t.member_points == 1 and t.readers == 2
+
+
+def test_an_unverified_reader_counts_only_while_holding_a_paid_membership(test_client):
+    """Someone who paid is not a fake account, so their reactions count even if their email was never
+    verified, but only for the moments the membership was running."""
+    who = partner(test_client, stories=2)
+    p1, p2 = who["post_ids"]
+    paying, free = established_reader(verified=False), established_reader(verified=False)
+    member_between(paying, at(3, 1), at(3, 10))
+    add(
+        clap(paying, p1, at(3, 5)),  # during the membership: counts
+        clap(paying, p2, at(3, 20)),  # after it ended, still unverified: does not
+        clap(free, p1, at(3, 5)),  # never paid, never verified: does not
+    )
+    t = tally("2025-03", who["user"]["id"])
+    assert t.claps == 1 and t.points == 1 and t.member_points == 1 and t.readers == 1
 
 
 def test_a_members_reaction_is_worth_the_months_member_weight(test_client):

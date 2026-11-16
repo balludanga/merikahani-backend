@@ -31,6 +31,9 @@ class User(Base):
     email_verified = Column(Boolean, nullable=False, default=False, server_default=false())
     # Bumped to invalidate every token issued earlier (takeover, password retired).
     token_version = Column(Integer, nullable=False, default=0, server_default="0")
+    # Set when the person deleted their account: the row stays only as an empty shell that the money
+    # records point to (app/core/account.py). Such an account cannot sign in or be seen.
+    deleted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

@@ -197,8 +197,21 @@ def google_login(payload: GoogleLoginRequest, request: Request, db: Session = De
     return _token_response(user)
 
 
+def _password_sign_in_allowed() -> bool:
+    return settings.PASSWORD_SIGN_IN if settings.PASSWORD_SIGN_IN is not None else settings.debug
+
+
+def _require_password_sign_in() -> None:
+    """Sign-in is by Google only (the address is verified by Google and nobody can fill the site with
+    made-up accounts). Anyone who made an account with a password signs in with the Google account that
+    has the same address: google_login then keeps their stories and retires the password."""
+    if not _password_sign_in_allowed():
+        raise HTTPException(status_code=403, detail="अब साइन इन केवल गूगल (Google) से होता है")
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserCreate, request: Request, db: Session = Depends(get_db)):
+    _require_password_sign_in()
     enforce(registrations, f"ip:{client_ip(request)}", REGISTER_IP_LIMIT, REGISTER_WINDOW, record=True)
     enforce(registrations, f"edge:{edge_ip(request)}", REGISTER_IP_LIMIT * EDGE_LIMIT_FACTOR, REGISTER_WINDOW, record=True)
     email = user_data.email.strip().lower()
@@ -226,6 +239,7 @@ def register(user_data: UserCreate, request: Request, db: Session = Depends(get_
 
 @router.post("/login", response_model=Token)
 def login(user_data: UserLogin, request: Request, db: Session = Depends(get_db)):
+    _require_password_sign_in()
     enforce(ip_attempts, f"login:{client_ip(request)}", LOGIN_IP_LIMIT, LOGIN_WINDOW, record=True)
     enforce(ip_attempts, f"login-edge:{edge_ip(request)}", LOGIN_IP_LIMIT * EDGE_LIMIT_FACTOR, LOGIN_WINDOW, record=True)
     email = user_data.email.strip().lower()

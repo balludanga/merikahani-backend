@@ -24,6 +24,12 @@ class Settings(BaseSettings):
         "your-secret-key-here-change-in-production"
     )
     ALGORITHM: str = "HS256"
+    # Sign-in is by Google only. The email-and-password routes (/auth/register, /auth/login) answer 403
+    # unless this is on. None = follow DEBUG: on for local development and the tests (no Google needed),
+    # off in production, so a deployment that forgot the variable does not open them. "true"/"false" forces it.
+    PASSWORD_SIGN_IN: Optional[bool] = (
+        None if os.getenv("PASSWORD_SIGN_IN", "") == "" else os.getenv("PASSWORD_SIGN_IN", "").lower() in ("1", "true")
+    )
     # A sign-in stays good for this many days without being used. The app renews it when it is opened and
     # about once a day while it stays open (POST /api/auth/refresh), so whoever keeps coming back never has
     # to sign in again. SESSION_MAX_DAYS is the longest a sign-in may be renewed, counted from the real

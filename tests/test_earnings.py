@@ -82,12 +82,15 @@ def at(month, day, hour=12, minute=0, second=0):
     return datetime(2026, month, day, hour, minute, second)
 
 
-def reader(created=datetime(2026, 1, 1)):
-    """An established reader account (nobody signs in as them)."""
+def reader(created=datetime(2026, 1, 1), verified=True):
+    """An established reader account (nobody signs in as them). Verified unless a test says otherwise."""
     db = SessionLocal()
     try:
         tag = uuid.uuid4().hex[:8]
-        user = User(email=f"rd{tag}@example.com", username=f"rd{tag}", hashed_password="x", created_at=created)
+        user = User(
+            email=f"rd{tag}@example.com", username=f"rd{tag}", hashed_password="x", created_at=created,
+            email_verified=verified,
+        )
         db.add(user)
         db.commit()
         _made_users.append(user.id)
@@ -255,6 +258,24 @@ def test_what_should_not_count_does_not(test_client):
     near = reader(created=at(3, 5, 12, 0, 1))
     add(clap(added, post, at(3, 12)), clap(near, post, at(3, 12)))
     assert tally("2026-03", uid).claps == 2
+
+
+def test_a_reader_whose_email_is_not_verified_does_not_count(test_client):
+    """An account anyone can make in a minute (a password sign-up nobody ever verifies) cannot move a
+    share of the pool, whatever it does and however old it is."""
+    owner = partner(test_client, approved=at(3, 10, 0))
+    post = owner["post_ids"][0]
+    uid = owner["user"]["id"]
+    fake = reader(verified=False)
+    add(
+        clap(fake, post, at(3, 12)),
+        highlight(fake, post, at(3, 12)),
+        response(fake, post, at(3, 12)),
+        clap(reader(), post, at(3, 12)),  # a verified reader on the same story
+    )
+    t = tally("2026-03", uid)
+    assert (t.claps, t.highlights, t.responses) == (1, 0, 0)
+    assert t.points == 1 and t.readers == 1 and fake not in t.by_reader
 
 
 def test_a_month_ends_at_midnight_in_india(test_client):

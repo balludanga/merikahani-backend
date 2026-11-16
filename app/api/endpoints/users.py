@@ -2,12 +2,15 @@ import json
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.endpoints.uploads import ALLOWED_TYPES, ImagePayload, _decode
+from app.core import account
 from app.core.badges import earned_badges
+from app.core.indexnow import notify as indexnow_notify
 from app.core.membership import shows_badge
 from app.core.dependencies import get_current_user, get_current_user_optional
 from app.core.ratelimit import actions, enforce
@@ -153,6 +156,37 @@ def remove_my_cover(db: Session = Depends(get_db), current_user: User = Depends(
 
 # --- anyone may read a profile and its images ---
 
+class DeleteAccountRequest(BaseModel):
+    # The person types their own username, so a stray tap (or a script holding a stolen sign-in) cannot do it.
+    confirm_username: str = Field(max_length=100)
+
+
+DELETE_ACCOUNT_LIMIT = (5, 60 * 60)  # attempts per hour
+
+
+@router.post("/me/delete", status_code=204)
+def delete_my_account(
+    payload: DeleteAccountRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete the signed-in person's account for good (see app/core/account.py for what goes and what stays)."""
+    enforce(actions, f"delete-account:{current_user.id}", *DELETE_ACCOUNT_LIMIT, record=True)
+    if payload.confirm_username.strip() != current_user.username:
+        raise HTTPException(status_code=400, detail="लिखा हुआ यूज़रनेम आपके यूज़रनेम से मेल नहीं खाता")
+    reason = account.blocker(db, current_user)
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
+    user_id = current_user.id
+    urls = account.erase(db, current_user)
+    # After the answer is sent: tell the search engines, and clear the pictures from the media bucket.
+    if urls:
+        background_tasks.add_task(indexnow_notify, urls)
+    background_tasks.add_task(account.remove_uploaded_files, user_id)
+    return Response(status_code=204)
+
+
 def _serve(db: Session, request: Request, user_id: int, kind: str) -> Response:
     media = db.query(UserMedia).filter(UserMedia.user_id == user_id).first()
     data = getattr(media, kind, None) if media else None
@@ -181,7 +215,7 @@ def get_user(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not user:
         raise HTTPException(status_code=404, detail="लेखक नहीं मिला")
     return _build_profile(db, user, current_user)
