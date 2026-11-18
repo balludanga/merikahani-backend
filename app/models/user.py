@@ -25,6 +25,13 @@ class User(Base):
     genres_json = Column(Text, nullable=True)         # ["कहानी", ...]
     links_json = Column(Text, nullable=True)          # [{"label": ..., "url": ...}]
     pinned_json = Column(Text, nullable=True)         # [post ids]
+    # The languages this person reads and writes in (codes from app/core/languages.py), as JSON lists.
+    # Empty means "not chosen yet": the feed then shows every language.
+    read_languages_json = Column(Text, nullable=True)
+    write_languages_json = Column(Text, nullable=True)
+    # The one language they prefer: the interface is shown in it, its stories come first in the feed and a
+    # new story starts in it. Always one of their reading languages when they have chosen any.
+    primary_language = Column(String(8), nullable=True)
     # 'password' | 'google'. Google accounts never log in with a password.
     auth_provider = Column(String, nullable=False, default="password", server_default="password")
     # True only when Google vouched for the address; password sign-ups are unverified.
@@ -75,6 +82,24 @@ class User(Base):
     @property
     def links(self):
         return [l for l in self._load(self.links_json) if isinstance(l, dict) and l.get("url")]
+
+    @property
+    def read_languages(self):
+        return self._language_list(self.read_languages_json)
+
+    @property
+    def write_languages(self):
+        return self._language_list(self.write_languages_json)
+
+    @classmethod
+    def _language_list(cls, raw):
+        from app.core.languages import BY_CODE
+
+        out = []
+        for code in cls._load(raw):
+            if isinstance(code, str) and code in BY_CODE and code not in out:
+                out.append(code)
+        return out
 
     @property
     def pinned_post_ids(self):

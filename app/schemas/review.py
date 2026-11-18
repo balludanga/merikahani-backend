@@ -159,6 +159,7 @@ class QueueItem(BaseModel):
     slug: str
     published: int
     moderation_state: str
+    language: str = "hi"
     created_at: datetime
     updated_at: datetime
     author: QueueAuthor

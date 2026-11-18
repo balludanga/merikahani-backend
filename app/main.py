@@ -270,7 +270,7 @@ app.include_router(api_router, prefix="/api")
 
 @app.get("/")
 def read_root():
-    return {"message": "लेखनी — हिंदी लेखकों का अपना मंच", "name": "लेखनी"}
+    return {"message": "लेखनी — भारतीय भाषाओं के लेखकों का अपना मंच", "name": "लेखनी"}
 
 if __name__ == "__main__":
     import uvicorn

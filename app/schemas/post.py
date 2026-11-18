@@ -3,6 +3,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 from typing import List, Optional
+from app.core.languages import DEFAULT_LANGUAGE, normalize_language
 from app.schemas.user import PublicUserResponse
 
 # An inline cover is a compressed photo; ~3 MB of base64 is already generous.
@@ -18,6 +19,10 @@ def _check_cover(value):
     return value
 
 
+def _check_language(value):
+    return normalize_language(value)
+
+
 class PostBase(BaseModel):
     title: str = Field(max_length=300)
     subtitle: Optional[str] = Field(None, max_length=500)
@@ -25,12 +30,19 @@ class PostBase(BaseModel):
     content_html: Optional[str] = Field(None, max_length=600_000)
     cover_image: Optional[str] = None
     topic: Optional[str] = Field(None, max_length=50)
+    # The language the story is written in (app/core/languages.py). Hindi when the client says nothing.
+    language: str = DEFAULT_LANGUAGE
     published: int = Field(0, ge=0, le=1)
 
     @field_validator("cover_image")
     @classmethod
     def cover_is_safe(cls, value):
         return _check_cover(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def known_language(cls, value):
+        return _check_language(value)
 
 class PostCreate(PostBase):
     tags: Optional[List[str]] = None
@@ -42,10 +54,11 @@ class PostUpdate(BaseModel):
     content_html: Optional[str] = Field(None, max_length=600_000)
     cover_image: Optional[str] = None
     topic: Optional[str] = Field(None, max_length=50)
+    language: Optional[str] = None
     published: Optional[int] = Field(None, ge=0, le=1)
     tags: Optional[List[str]] = None
 
-    @field_validator("title", "content", "published", mode="before")
+    @field_validator("title", "content", "published", "language", mode="before")
     @classmethod
     def required_when_sent(cls, value):
         # These columns are NOT NULL: omit them to leave unchanged, never send null.
@@ -58,6 +71,11 @@ class PostUpdate(BaseModel):
     def cover_is_safe(cls, value):
         return _check_cover(value)
 
+    @field_validator("language")
+    @classmethod
+    def known_language(cls, value):
+        return _check_language(value) if value is not None else value
+
 class PostResponse(BaseModel):
     """Read shape. Deliberately NOT built on PostBase: input limits must never
     make an already-stored post unreadable."""
@@ -68,6 +86,7 @@ class PostResponse(BaseModel):
     content_html: Optional[str] = None
     cover_image: Optional[str] = None
     topic: Optional[str] = None
+    language: str = DEFAULT_LANGUAGE
     published: int = 0
     # 'none' for anything the public can read; the writer and reviewers see the review state.
     moderation_state: str = "none"

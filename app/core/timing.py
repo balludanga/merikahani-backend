@@ -19,6 +19,8 @@ import re
 from array import array
 from typing import List, Optional, Sequence, Tuple
 
+from app.core.languages import LETTER_RANGES
+
 SAMPLE_RATE = 24000
 FRAME = 480  # 20 ms of audio
 FRAME_SECONDS = FRAME / SAMPLE_RATE
@@ -38,7 +40,7 @@ ESTIMATE_LEAD = 0.3
 ESTIMATE_TRAIL = 0.6
 _SENTENCE_END = re.compile(r"[।॥?!][”\"’)]*$|\.[”\"’)]*$")
 _CLAUSE_END = re.compile(r"[,;:—–…][”\"’)]*$")
-_LETTERS = re.compile(r"[ऀ-ॣ०-ॿ\w]")
+_LETTERS = re.compile("[" + LETTER_RANGES + r"\w]")
 
 # (word, kind of pause after it)
 Unit = Tuple[str, str]
@@ -151,7 +153,7 @@ UNUSED_GAP_COST = 2.0
 
 
 MAX_UNUSED_GAPS = 5
-_L = r"[\u0900-\u0963\u0966-\u097F\w]"
+_L = "[" + LETTER_RANGES + r"\w]"
 _SPLIT = re.compile(r"(?<=" + _L + r"[—–'’‘\"“”])(?=" + _L + r")")
 
 

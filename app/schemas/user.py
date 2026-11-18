@@ -37,6 +37,10 @@ class UserResponse(PublicUserResponse):
     is_admin: bool = False
     # Whether this account can open the money pages (the monthly sheet, the books).
     is_owner: bool = False
+    # The languages this person reads and writes in (codes); empty until they choose.
+    read_languages: List[str] = []
+    write_languages: List[str] = []
+    primary_language: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
@@ -59,6 +63,10 @@ class UserProfileResponse(PublicUserResponse):
     genres: List[str] = []
     links: List[LinkItem] = []
     pinned_post_ids: List[int] = []
+    # What they write in is public; what they read in is shown only to themselves.
+    write_languages: List[str] = []
+    read_languages: Optional[List[str]] = None
+    primary_language: Optional[str] = None
     badges: List[Badge] = []
     follower_count: int = 0
     following_count: int = 0

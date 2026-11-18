@@ -14,6 +14,8 @@ class Post(Base):
     slug = Column(String, unique=True, index=True, nullable=False)
     cover_image = Column(String, nullable=True)
     topic = Column(String, nullable=True, index=True)
+    # What the story is written in: one of app/core/languages.py. Everything before languages existed is Hindi.
+    language = Column(String(8), nullable=False, default="hi", server_default="hi", index=True)
     clap_count = Column(Integer, default=0, nullable=False)
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     published = Column(Integer, default=0, index=True)  # 0 = draft, 1 = published

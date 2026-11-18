@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.languages import clean_language_list, normalize_language
+
 # Banner designs the browser knows how to draw (frontend/src/utils/profileStyle.js).
 COVER_STYLES = ["dawn", "sky", "forest", "ember", "ink", "sand", "twilight", "meadow"]
 
@@ -79,6 +81,21 @@ class ProfileUpdate(BaseModel):
     genres: Optional[List[str]] = None
     links: Optional[List[LinkItem]] = None
     pinned_post_ids: Optional[List[int]] = None
+    read_languages: Optional[List[str]] = None
+    write_languages: Optional[List[str]] = None
+    primary_language: Optional[str] = None
+
+    @field_validator("primary_language")
+    @classmethod
+    def known_primary(cls, value):
+        # one of our language codes; an empty string clears it
+        return None if value in (None, "") else normalize_language(value)
+
+    @field_validator("read_languages", "write_languages")
+    @classmethod
+    def known_languages(cls, value):
+        # Codes from app/core/languages.py; an empty list means "not chosen" (the feed then shows all).
+        return None if value is None else clean_language_list(value)
 
     @field_validator("full_name", "tagline", "status_line", "location")
     @classmethod

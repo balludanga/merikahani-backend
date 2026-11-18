@@ -4,7 +4,7 @@ from app.core.config import settings
 def test_read_root(test_client):
     response = test_client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"message": "लेखनी — हिंदी लेखकों का अपना मंच", "name": "लेखनी"}
+    assert response.json() == {"message": "लेखनी — भारतीय भाषाओं के लेखकों का अपना मंच", "name": "लेखनी"}
 
 
 def test_the_headers_cors_middleware_leaves_to_us(test_client):

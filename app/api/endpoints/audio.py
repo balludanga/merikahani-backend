@@ -28,6 +28,7 @@ from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.content import PREVIEW_LIMIT
 from app.core.dependencies import get_current_user_optional
+from app.core.languages import tts_languages
 from app.core.casting import plan_story
 from app.core.narration import DIALOGUE_STYLE, STYLE, fingerprint, scan, spoken_chars
 from app.core.ratelimit import EDGE_LIMIT_FACTOR, actions, client_ip, edge_ip, enforce
@@ -173,6 +174,11 @@ def _open_story(post_id: int, db: Session, user: Optional[User]) -> Tuple[Post, 
     return post, content
 
 
+def _server_reads(post: Post) -> bool:
+    """Is this story in a language the server voice has been set up for? (See TTS_LANGUAGES.)"""
+    return (post.language or "hi") in tts_languages(settings.TTS_LANGUAGES)
+
+
 def _current_row(db: Session, post: Post, content: str) -> Tuple[Optional[StoryAudio], str]:
     """(the stored narration if it still matches the story's text, the story's fingerprint)."""
     digest = fingerprint(post.title or "", content)
@@ -188,11 +194,15 @@ def audio_status(post_id: Optional[int] = None, db: Session = Depends(get_db)):
     exists (and keeps playing even on a day the free allowance is used up).
     """
     ready = False
+    enabled = is_available()
     if post_id is not None:
         post = db.query(Post).filter(Post.id == post_id, Post.published == 1).first()
         if post and (post.content or "").strip():
             ready = _current_row(db, post, post.content)[0] is not None
-    return {"enabled": is_available(), "ready": ready}
+        # A language the server voice is not set up for is read by the listener's own device.
+        if post and not _server_reads(post):
+            enabled = False
+    return {"enabled": enabled, "ready": ready}
 
 
 @router.get("/post/{post_id}")
@@ -219,7 +229,7 @@ def get_story_audio(
             return JSONResponse(_working(job), status_code=202)
 
         # Nobody is making this story's audio yet: start it, if the allowances permit.
-        if not is_available():
+        if not is_available() or not _server_reads(post):
             raise HTTPException(status_code=503, detail="सर्वर की आवाज़ अभी उपलब्ध नहीं है")
         key = f"tts:{current_user.id}" if current_user else f"tts-ip:{client_ip(request)}"
         enforce(actions, key, GENERATIONS_PER_HOUR, 3600, record=True)

@@ -1,7 +1,9 @@
 from urllib.parse import quote
 from xml.sax.saxutils import escape
 
-from fastapi import APIRouter, Depends, Request, Response
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -10,6 +12,7 @@ from app.api.endpoints.posts import cover_url
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.content import preview_text
+from app.core.languages import BY_CODE, html_lang, og_locale, parse_filter
 from app.database import get_db
 from app.models.post import Post
 from app.models.tag import Tag, post_tags
@@ -73,8 +76,11 @@ def generate_sitemap(db: Session = Depends(get_db)):
 
 
 @router.get("/rss.xml")
-def generate_rss(db: Session = Depends(get_db)):
-    """Generate RSS feed for published posts"""
+def generate_rss(
+    lang: Optional[str] = Query(None, max_length=120, description="only these languages, e.g. ta,hi"),
+    db: Session = Depends(get_db),
+):
+    """Generate RSS feed for published posts (every language, or the ones named in ?lang=)"""
 
     base_url = settings.FRONTEND_URL.rstrip("/")
 
@@ -82,15 +88,19 @@ def generate_rss(db: Session = Depends(get_db)):
     rss = '<?xml version="1.0" encoding="UTF-8"?>\n'
     rss += '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
     rss += '  <channel>\n'
-    rss += '    <title>लेखनी — हिंदी लेखकों का अपना मंच</title>\n'
+    rss += '    <title>लेखनी — भारतीय भाषाओं के लेखकों का अपना मंच</title>\n'
     rss += f'    <link>{base_url}</link>\n'
-    rss += '    <description>हिंदी में कहानी, कविता, निबंध और संस्मरण। हर रचना इंसान की लिखी।</description>\n'
+    rss += '    <description>हिंदी, अंग्रेज़ी और भारत की बाकी भाषाओं में कहानी, कविता, निबंध और संस्मरण। हर रचना इंसान की लिखी।</description>\n'
     rss += '    <language>hi</language>\n'
     rss += f'    <lastBuildDate>{utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")}</lastBuildDate>\n'
     rss += f'    <atom:link href="{base_url}/rss.xml" rel="self" type="application/rss+xml"/>\n'
 
     # Get latest 50 published posts
-    posts = db.query(Post).filter(Post.published == 1).order_by(Post.created_at.desc()).limit(50).all()
+    query = db.query(Post).filter(Post.published == 1)
+    languages = parse_filter(lang)
+    if languages is not None:
+        query = query.filter(Post.language.in_(languages or [""]))
+    posts = query.order_by(Post.created_at.desc()).limit(50).all()
 
     for post in posts:
         rss += '    <item>\n'
@@ -100,6 +110,7 @@ def generate_rss(db: Session = Depends(get_db)):
         rss += f'      <dc:creator>{escape(post.author.full_name or post.author.username)}</dc:creator>\n'
         rss += f'      <pubDate>{post.created_at.strftime("%a, %d %b %Y %H:%M:%S +0000")}</pubDate>\n'
         rss += f'      <guid>{escape(base_url)}/post/{escape(post.slug)}</guid>\n'
+        rss += f'      <dc:language>{html_lang(post.language)}</dc:language>\n'
         rss += '    </item>\n'
 
     rss += '  </channel>\n'
@@ -131,12 +142,14 @@ def share_post(slug: str, request: Request, db: Session = Depends(get_db)):
     elif not image.startswith(("http://", "https://")):
         image = f"{base_url}/logo.png"
     author = post.author.full_name or post.author.username
+    story_lang = html_lang(post.language)
+    dir_attr = ' dir="rtl"' if BY_CODE[story_lang].rtl else ""
 
     def attr(value: str) -> str:
         return escape(value, {'"': "&quot;"})
 
     html = f"""<!doctype html>
-<html lang="hi"><head><meta charset="utf-8">
+<html lang="{story_lang}"{dir_attr}><head><meta charset="utf-8">
 <title>{escape(post.title)}</title>
 <meta name="description" content="{attr(description)}">
 <link rel="canonical" href="{attr(target)}">
@@ -145,7 +158,7 @@ def share_post(slug: str, request: Request, db: Session = Depends(get_db)):
 <meta property="og:description" content="{attr(description)}">
 <meta property="og:url" content="{attr(target)}">
 <meta property="og:image" content="{attr(image)}">
-<meta property="og:locale" content="hi_IN">
+<meta property="og:locale" content="{og_locale(post.language)}">
 <meta property="article:author" content="{attr(author)}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{attr(post.title)}">

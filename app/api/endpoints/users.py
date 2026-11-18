@@ -56,6 +56,10 @@ def _build_profile(db: Session, user: User, viewer: Optional[User]) -> UserProfi
         .first()
     )
     profile.is_member = shows_badge(db, user.id)
+    # The languages a person writes in are part of their public page; what they read in is theirs alone.
+    is_self = viewer is not None and viewer.id == user.id
+    profile.read_languages = user.read_languages if is_self else None
+    profile.primary_language = user.primary_language if is_self else None
     return profile
 
 
@@ -75,6 +79,18 @@ def update_my_profile(
             setattr(current_user, field, getattr(payload, field))
     if "genres" in sent:
         current_user.genres_json = json.dumps(payload.genres or [], ensure_ascii=False)
+    for field in ("read_languages", "write_languages"):
+        if field in sent:
+            setattr(current_user, f"{field}_json", json.dumps(getattr(payload, field) or []))
+    reading = current_user.read_languages
+    if "primary_language" in sent:
+        current_user.primary_language = payload.primary_language
+        # The preferred language is always one of the languages they read in (when they have chosen any).
+        if current_user.primary_language and reading and current_user.primary_language not in reading:
+            current_user.read_languages_json = json.dumps([current_user.primary_language] + reading)
+    elif "read_languages" in sent and reading and current_user.primary_language not in reading:
+        # they took their preferred language off the reading list without naming another
+        current_user.primary_language = None
     if "links" in sent:
         current_user.links_json = json.dumps(
             [{"label": item.label, "url": item.url} for item in (payload.links or [])], ensure_ascii=False

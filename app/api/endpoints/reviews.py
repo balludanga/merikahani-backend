@@ -27,6 +27,7 @@ from app.core.admin import is_admin, require_admin
 from app.core.clock import utcnow
 from app.core.dependencies import get_current_user
 from app.core.indexnow import notify as indexnow_notify, urls_for_story_change
+from app.core.languages import parse_filter
 from app.core.notify import notify
 from app.core.ratelimit import actions, enforce
 from app.core.review import tell_reviewers_of_resubmission
@@ -92,6 +93,7 @@ def queue_counts(db: Session = Depends(get_db), _admin: User = Depends(require_a
 def queue(
     view: str = Query("resubmitted", pattern="^(resubmitted|changes_requested|live)$"),
     q: Optional[str] = Query(None, max_length=100),
+    lang: Optional[str] = Query(None, max_length=120, description="only stories in these languages, e.g. ta,hi"),
     skip: int = Query(0, ge=0, le=100000),
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -104,6 +106,9 @@ def queue(
         query = query.filter(Post.published == 1)
     else:
         query = query.filter(Post.moderation_state == view)
+    languages = parse_filter(lang)
+    if languages is not None:
+        query = query.filter(Post.language.in_(languages or [""]))
     if q and q.strip():
         escaped = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         query = query.filter(Post.title.ilike(f"%{escaped}%", escape="\\"))
@@ -136,6 +141,7 @@ def queue(
             slug=post.slug,
             published=post.published,
             moderation_state=post.moderation_state,
+            language=post.language,
             created_at=post.created_at,
             updated_at=post.updated_at,
             author=post.author,

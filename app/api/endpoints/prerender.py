@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.endpoints.posts import cover_url
 from app.core.config import settings
+from app.core.languages import BY_CODE, html_lang, og_locale
 from app.core.content import PREVIEW_LIMIT, preview_text
 from app.database import get_db
 from app.models.post import Post
@@ -117,7 +118,7 @@ def prerender_post(slug: str, request: Request, db: Session = Depends(get_db)):
         "headline": title[:110],
         "description": description,
         "image": image,
-        "inLanguage": "hi",
+        "inLanguage": html_lang(post.language),
         "datePublished": _iso(post.created_at),
         "dateModified": _iso(post.updated_at),
         "mainEntityOfPage": {"@type": "WebPage", "@id": story_url},
@@ -201,8 +202,11 @@ def prerender_post(slug: str, request: Request, db: Session = Depends(get_db)):
     article_ld = _json_ld(article)
     breadcrumbs_ld = _json_ld(breadcrumbs)
 
+    story_lang = html_lang(post.language)
+    dir_attr = ' dir="rtl"' if BY_CODE[story_lang].rtl else ""
+
     page = f"""<!doctype html>
-<html lang="hi">
+<html lang="{story_lang}"{dir_attr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -214,7 +218,7 @@ def prerender_post(slug: str, request: Request, db: Session = Depends(get_db)):
 <link rel="alternate" type="application/rss+xml" title="लेखनी" href="{_attr(base_url)}/rss.xml">
 <meta property="og:site_name" content="लेखनी">
 <meta property="og:type" content="article">
-<meta property="og:locale" content="hi_IN">
+<meta property="og:locale" content="{og_locale(post.language)}">
 <meta property="og:title" content="{_attr(title)}">
 <meta property="og:description" content="{_attr(description)}">
 <meta property="og:url" content="{_attr(story_url)}">
@@ -232,7 +236,7 @@ def prerender_post(slug: str, request: Request, db: Session = Depends(get_db)):
 <style>{STYLE}</style>
 </head>
 <body>
-<header><a href="{_attr(base_url)}/">लेखनी</a> — हिंदी लेखकों का अपना मंच</header>
+<header><a href="{_attr(base_url)}/">लेखनी</a> — लेखकों का अपना मंच</header>
 <main>
 <article>
 <h1>{escape(title)}</h1>
@@ -312,7 +316,7 @@ def _hub_document(
 {ld_html}<style>{STYLE}</style>
 </head>
 <body>
-<header><a href="{_attr(base_url)}/">लेखनी</a> — हिंदी लेखकों का अपना मंच</header>
+<header><a href="{_attr(base_url)}/">लेखनी</a> — लेखकों का अपना मंच</header>
 <main>
 <h1>{escape(heading)}</h1>
 {intro_html}

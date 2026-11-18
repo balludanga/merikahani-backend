@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 import base64
@@ -27,6 +27,7 @@ from app.models.notification import CLAP
 from app.core.review import tell_reviewers_of_resubmission
 from app.core.indexnow import notify as indexnow_notify, urls_for_story_change
 from app.core.sanitize import clean_html
+from app.core.languages import LETTER_RANGES, normalize_language, parse_filter
 
 router = APIRouter()
 
@@ -46,9 +47,10 @@ OWN_LIST_MAX = 500
 
 def generate_slug(title: str) -> str:
     slug = (title or "").strip().lower()
-    # Keep the full Devanagari block (incl. matras and nukta) so Hindi
-    # titles and tags produce readable slugs.
-    slug = re.sub(r"[^\w\sऀ-ॿ-]", "", slug, flags=re.UNICODE)
+    # Keep the full Devanagari block (incl. matras and nukta) and the letters of every other supported
+    # script (vowel signs are combining marks, which \w does not cover), so titles in any of the
+    # site's languages produce readable slugs.
+    slug = re.sub(rf"[^\w\sऀ-ॿ{LETTER_RANGES}-]", "", slug, flags=re.UNICODE)
     slug = re.sub(r"[-\s]+", "-", slug).strip("-")[:80]
     if not slug:
         slug = f"lekh-{int(epoch_seconds())}"
@@ -57,6 +59,27 @@ def generate_slug(title: str) -> str:
 
 def unique_suffix(slug: str) -> str:
     return f"{slug}-{uuid.uuid4().hex[:8]}"
+
+
+def language_scope(query, lang: Optional[str], primary: Optional[str]):
+    """Narrow a list of stories to the reader's languages and put their preferred one first.
+
+    ``lang`` ("ta,hi") limits the languages; absent = every language; only unknown codes = nothing.
+    ``primary`` makes that language's stories come first, the rest after it, each newest first.
+    Returns (query, order_by) or (None, None) when the reader asked for languages we do not have.
+    """
+    languages = parse_filter(lang)
+    if languages is not None and not languages:
+        return None, None
+    if languages:
+        query = query.filter(Post.language.in_(languages))
+    order = [Post.created_at.desc()]
+    if primary:
+        try:
+            order.insert(0, case((Post.language == normalize_language(primary), 0), else_=1))
+        except ValueError:
+            pass  # not one of our languages: no preference
+    return query, order
 
 
 def like_pattern(term: str) -> str:
@@ -192,10 +215,15 @@ def get_posts(
     tag: Optional[str] = Query(None, max_length=80),
     feed: Optional[str] = Query(None),
     q: Optional[str] = Query(None, max_length=100),
+    lang: Optional[str] = Query(None, max_length=120, description="languages to show, e.g. ta,hi; absent = all"),
+    primary: Optional[str] = Query(None, max_length=8, description="the reader's preferred language: its stories come first"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     query = db.query(Post).options(selectinload(Post.author))
+    query, order = language_scope(query, lang, primary)
+    if query is None:
+        return []  # asked for languages we do not have: nothing to show
     if published is None or published == 1:
         query = query.filter(Post.published == 1)
     else:
@@ -229,7 +257,7 @@ def get_posts(
             conditions.append(Post.content.ilike(like, escape="\\"))
         query = query.filter(or_(*conditions))
 
-    posts = query.order_by(Post.created_at.desc()).offset(skip).limit(limit).all()
+    posts = query.order_by(*order).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
     return list_response(posts, request, current_user)
 
@@ -360,6 +388,7 @@ def create_post(
             slug=slug,
             cover_image=post_data.cover_image,
             topic=post_data.topic,
+            language=post_data.language,
             author_id=current_user.id,
             published=post_data.published,
             clap_count=0,

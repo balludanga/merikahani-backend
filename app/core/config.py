@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     CAST_MODELS: str = os.getenv("CAST_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash")
     # Longest single turn (one voice's uninterrupted text) before it is cut at a sentence end, and
     # the most characters one speech request reads (one request may hold two voices).
+    # Languages the SERVER voice may narrate (codes, comma separated). The narration prompts, the
+    # voice casting and the pacing rules were written and listened to in Hindi only, so only Hindi is
+    # on until someone listens to another language and turns it on here. Every other language is read
+    # by the listener's own browser voice, when the device has one for it.
+    TTS_LANGUAGES: str = os.getenv("TTS_LANGUAGES", "hi")
     TTS_CHUNK_CHARS: int = int(os.getenv("TTS_CHUNK_CHARS", "1500"))
     TTS_WINDOW_CHARS: int = int(os.getenv("TTS_WINDOW_CHARS", "3000"))
     # Soft monthly cap on characters sent, a guard on top of Google's own free limits.

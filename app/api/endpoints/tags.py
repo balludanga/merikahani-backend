@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
-from typing import List
+from typing import List, Optional
 from app.database import get_db
 from app.models.post import Post
 from app.models.tag import Tag, post_tags
 from app.schemas.post import PostResponse
 from app.schemas.tag import TagResponse
 from app.core.dependencies import get_current_user_optional
-from app.api.endpoints.posts import decorate_posts, list_response
+from app.api.endpoints.posts import decorate_posts, language_scope, list_response
 
 router = APIRouter()
 
@@ -38,6 +38,8 @@ def get_posts_by_tag(
     request: Request,
     skip: int = Query(0, ge=0, le=100000),
     limit: int = Query(20, ge=1, le=100),
+    lang: Optional[str] = Query(None, max_length=120, description="only these languages, e.g. ta,hi"),
+    primary: Optional[str] = Query(None, max_length=8, description="the reader's preferred language: first"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_optional),
 ):
@@ -45,15 +47,15 @@ def get_posts_by_tag(
     if not tag:
         raise HTTPException(status_code=404, detail="यह टैग नहीं मिला")
 
-    posts = (
+    query = (
         db.query(Post)
         .options(selectinload(Post.author))
         .join(post_tags, post_tags.c.post_id == Post.id)
         .filter(post_tags.c.tag_id == tag.id, Post.published == 1)
-        .order_by(Post.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
     )
+    query, order = language_scope(query, lang, primary)
+    if query is None:
+        return []
+    posts = query.order_by(*order).offset(skip).limit(limit).all()
     decorate_posts(posts, current_user, db)
     return list_response(posts, request, current_user)
