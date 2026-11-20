@@ -11,6 +11,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 
+from app.core.rls import enable_row_level_security
 from app.database import engine
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -30,6 +31,9 @@ def run_migrations() -> None:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
             connection.commit()
+            # Supabase publishes every public table over its own API; RLS with no policy closes that
+            # door (the app is the tables' owner and unaffected). Postgres only, never raises.
+            enable_row_level_security(connection)
         finally:
             if is_postgres:
                 connection.rollback()
