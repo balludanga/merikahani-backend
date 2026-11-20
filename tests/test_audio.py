@@ -96,9 +96,10 @@ def test_a_story_that_already_has_audio_is_marked_ready_and_keeps_playing_when_t
     for model in speech.tts_models():  # now the day's allowance is used up
         speech._block_model(model, 3600)
     status = test_client.get(f"/api/audio/status?post_id={post['id']}").json()
-    assert status == {"enabled": False, "ready": True}
+    assert status == {"enabled": False, "ready": True, "covered": True}
     assert test_client.get(f"/api/audio/post/{post['id']}").status_code == 200  # still played from the store
-    assert test_client.get(f"/api/audio/status?post_id={other['id']}").json() == {"enabled": False, "ready": False}
+    assert test_client.get(f"/api/audio/status?post_id={other['id']}").json() == {
+        "enabled": False, "ready": False, "covered": True}
     assert test_client.get(f"/api/audio/post/{other['id']}").status_code == 503  # a new one cannot be made
 
 
@@ -744,3 +745,31 @@ class TestEveryLanguageGoogleLists:
             assert _listen(test_client, response.json()["id"]).status_code == 200
         assert "Tamil" in seen["style"] and "Tamil" in seen["dialogue"]
         assert seen["voices"] and all(v.startswith("ta-in-") for v in seen["voices"])
+
+
+class TestWhichLanguagesTheServerVoiceCovers:
+    # The page uses this to decide whether the device's own voice may stand in when a limit is hit.
+    def _story(self, client, writer, language):
+        body = {"title": "आवाज़ की जाँच", "content": SHORT, "published": 1, "language": language}
+        response = client.post("/api/posts", json=body, headers=writer["headers"])
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_covered_is_true_for_a_language_the_server_reads_even_when_the_allowance_is_gone(
+        self, test_client, writer_a
+    ):
+        ta = self._story(test_client, writer_a, "ta")
+        with patch.object(settings, "GEMINI_API_KEY", "test-key"):
+            for model in speech.tts_models():
+                speech._block_model(model, 3600)
+            status = test_client.get(f"/api/audio/status?post_id={ta['id']}").json()
+        assert status == {"enabled": False, "ready": False, "covered": True}
+
+    def test_covered_is_false_for_a_language_the_server_does_not_read(self, test_client, writer_a):
+        sa = self._story(test_client, writer_a, "sa")
+        with patch.object(settings, "GEMINI_API_KEY", "test-key"):
+            status = test_client.get(f"/api/audio/status?post_id={sa['id']}").json()
+        assert status == {"enabled": False, "ready": False, "covered": False}
+
+    def test_without_a_story_the_answer_is_as_it_always_was(self, test_client):
+        assert set(test_client.get("/api/audio/status").json()) == {"enabled", "ready"}

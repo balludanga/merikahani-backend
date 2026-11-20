@@ -192,18 +192,26 @@ def audio_status(post_id: Optional[int] = None, db: Session = Depends(get_db)):
     """What the page needs before the tap, to pick its voice without a wasted round trip.
 
     ``enabled``: a new narration can be made right now. ``ready``: this story's narration already
-    exists (and keeps playing even on a day the free allowance is used up).
+    exists (and keeps playing even on a day the free allowance is used up). ``covered`` (only with a
+    story id): the server voice is the voice for this story's language. The page then never stands the
+    listener's own device voice in for it when a limit is hit (the paid service will lift the limits);
+    only a language the server voice is not set up for is read by the device.
     """
     ready = False
     enabled = is_available()
+    covered = False
     if post_id is not None:
         post = db.query(Post).filter(Post.id == post_id, Post.published == 1).first()
         if post and (post.content or "").strip():
             ready = _current_row(db, post, post.content)[0] is not None
+        covered = bool(post) and _server_reads(post)
         # A language the server voice is not set up for is read by the listener's own device.
-        if post and not _server_reads(post):
+        if post and not covered:
             enabled = False
-    return {"enabled": enabled, "ready": ready}
+    result = {"enabled": enabled, "ready": ready}
+    if post_id is not None:
+        result["covered"] = covered
+    return result
 
 
 @router.get("/post/{post_id}")
