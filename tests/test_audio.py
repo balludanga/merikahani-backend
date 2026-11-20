@@ -241,7 +241,7 @@ def test_a_story_cut_short_by_the_daily_allowance_resumes_without_paying_twice(t
     post = _post(test_client, writer_a, SHORT + " अधूरी रचना।", title="अधूरी")
     seen = {"plans": 0, "cache_at_retry": None}
 
-    def plan(post_id, title, content):
+    def plan(post_id, title, content, language="hi"):
         seen["plans"] += 1
         return [Window([Turn("v1", False, "पहला", True)]), Window([Turn("v1", False, "दूसरा", True)], 0.7)], None
 
@@ -649,3 +649,98 @@ class TestGeminiClient:
         models = settings.CAST_MODELS.split(",")
         assert [c[0][0].split("models/")[1].split(":")[0] for c in post.call_args_list] == models[:2]
         assert post.call_args_list[0][1]["json"]["generationConfig"]["responseMimeType"] == "application/json"
+
+
+# --- more than one language ------------------------------------------------------------------
+
+class TestEveryLanguageGoogleLists:
+    # What the owner asked for: the server voice reads each language Google lists, and no other.
+    LISTED = {"hi", "en", "as", "bn", "gu", "kn", "ks", "mai", "ml", "mni", "mr", "ne", "or", "pa", "sat", "sd", "ta", "te", "ur"}
+    NOT_LISTED = {"brx", "doi", "kok", "sa"}
+
+    def test_the_default_is_exactly_the_languages_google_lists(self):
+        from app.core.languages import CODES, tts_languages
+
+        on = set(tts_languages(settings.TTS_LANGUAGES))
+        assert on == self.LISTED
+        assert on | self.NOT_LISTED == set(CODES)  # every one of our languages is decided one way or the other
+
+    def test_hindi_keeps_its_own_texts_and_the_others_name_their_language(self):
+        assert narration.styles_for("hi") == (narration.STYLE, narration.DIALOGUE_STYLE)
+        assert narration.styles_for(None) == (narration.STYLE, narration.DIALOGUE_STYLE)
+        assert narration.styles_for("zz") == (narration.STYLE, narration.DIALOGUE_STYLE)  # unknown code: Hindi's
+        for code, name in (("ta", "Tamil"), ("ur", "Urdu"), ("en", "English"), ("mni", "Manipuri")):
+            style, dialogue = narration.styles_for(code)
+            assert name in style and name in dialogue
+            assert "Hindi" not in style and "Hindi" not in dialogue
+
+    def test_another_language_has_its_own_cache_key_and_hindi_is_untouched(self):
+        hindi = narration.fingerprint("शीर्षक", "एक छोटी कहानी।")
+        assert hindi == narration.fingerprint("शीर्षक", "एक छोटी कहानी।", "hi")
+        assert narration.fingerprint("शीर्षक", "एक छोटी कहानी।", "ta") != hindi
+        assert narration.fingerprint("शीर्षक", "एक छोटी कहानी।", "ta") != narration.fingerprint("शीर्षक", "एक छोटी कहानी।", "te")
+
+    def test_every_language_has_a_woman_and_a_man_to_read_it(self):
+        from app.core.voices import pools_for
+
+        assert pools_for("hi") is None  # Hindi's pools are the owner's settings
+        for code in self.LISTED - {"hi"}:
+            pools = pools_for(code)
+            assert pools["female"] and pools["male"], code
+            assert not set(pools["female"]) & set(pools["male"]), code
+        # languages with a library of their own use it; the rest use the built-in voices
+        assert all(v.startswith("ta-in-") for v in pools_for("ta")["female"] + pools_for("ta")["male"])
+        assert pools_for("sat") == pools_for("mai") == pools_for("or")
+        assert all("-" not in v for v in pools_for("sat")["female"] + pools_for("sat")["male"])
+
+    def test_a_tamil_story_is_cast_and_voiced_in_tamil(self):
+        seen = {}
+
+        def fake(prompt, schema):
+            seen["prompt"] = prompt
+            return {"narrator_gender": "female", "speakers": [], "quotes": []}
+
+        story = "நான் அன்று மாலை வீட்டில் இருந்தேன்.\n“நீ எப்போது வந்தாய்?” என்றாள் அம்மா."
+        with patch.object(casting, "generate_json", side_effect=fake):
+            windows, _ = casting.plan_story(7, "மழை", story, "ta")
+        assert "Tamil story" in seen["prompt"] and "Hindi" not in seen["prompt"]
+        assert "Title: மழை" in seen["prompt"] and "शीर्षक" not in seen["prompt"]
+        voices = {v for w in windows for v in w.voices}
+        assert voices and all(v.startswith("ta-in-") for v in voices)
+        # the same story always gets the same voice
+        with patch.object(casting, "generate_json", side_effect=fake):
+            assert casting.plan_story(7, "மழை", story, "ta")[0][0].voices == windows[0].voices
+
+    def test_hindi_casting_prompt_is_unchanged(self):
+        assert casting.prompt_for("hi") is casting.PROMPT and casting.prompt_for(None) is casting.PROMPT
+
+    def test_sentences_are_cut_at_the_full_stops_of_every_script(self):
+        for stop in ("।", "۔", "?", "؟", "᱾", "꯫", "."):
+            assert narration._split_long(f"एक बात{stop} दूसरी बात{stop} तीसरी बात{stop}", 14) == [
+                f"एक बात{stop}", f"दूसरी बात{stop}", f"तीसरी बात{stop}"], stop
+
+    def test_the_word_timer_hears_a_pause_after_an_urdu_full_stop(self):
+        from app.core import timing
+
+        units = timing.units_from_text("یہ ایک کہانی ہے۔ دوسری بات، پھر تیسری")
+        assert dict(units)["ہے۔"] == "sentence" and dict(units)["بات،"] == "clause"
+
+    def test_a_tamil_story_is_read_with_tamil_styles_and_voices_end_to_end(self, test_client, writer_a, gemini_on):
+        seen = {}
+
+        def fake(windows, style, dialogue_style, progress=None, cache=None, title_words=0, timings_out=None):
+            seen["style"], seen["dialogue"] = style, dialogue_style
+            seen["voices"] = {v for w in windows for v in w.voices}
+            return b"ID3-tamil"
+
+        response = test_client.post(
+            "/api/posts",
+            json={"title": "மழை மாலை", "content": "மழை பெய்து கொண்டிருந்தது. நான் ஜன்னல் வழியே பார்த்தேன்.",
+                  "published": 1, "language": "ta"},
+            headers=writer_a["headers"],
+        )
+        assert response.status_code == 201, response.text
+        with patch.object(audio_endpoint, "synthesize", side_effect=fake):
+            assert _listen(test_client, response.json()["id"]).status_code == 200
+        assert "Tamil" in seen["style"] and "Tamil" in seen["dialogue"]
+        assert seen["voices"] and all(v.startswith("ta-in-") for v in seen["voices"])

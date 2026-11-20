@@ -1,4 +1,4 @@
-"""Narrated audio of a story ("▶ सुनें"), made on the server in a natural Hindi voice.
+"""Narrated audio of a story ("▶ सुनें"), made on the server in a natural voice of its own language.
 
 The first listen of a story starts a background job that asks Google's Gemini speech model for
 the audio, joins the pieces into one MP3 and keeps it in the database. The page asks again every
@@ -30,7 +30,7 @@ from app.core.content import PREVIEW_LIMIT
 from app.core.dependencies import get_current_user_optional
 from app.core.languages import tts_languages
 from app.core.casting import plan_story
-from app.core.narration import DIALOGUE_STYLE, STYLE, fingerprint, scan, spoken_chars
+from app.core.narration import fingerprint, scan, spoken_chars, styles_for
 from app.core.ratelimit import EDGE_LIMIT_FACTOR, actions, client_ip, edge_ip, enforce
 from app.core.speech import SpeechUnavailable, is_available, synthesize
 from app.database import SessionLocal, get_db
@@ -101,7 +101,7 @@ def _working(job: Job) -> Dict[str, object]:
     return {"state": "working", "done": job.done, "total": job.total}
 
 
-def _run(post_id: int, digest: str, title: str, content: str) -> None:
+def _run(post_id: int, digest: str, title: str, content: str, language: str = "hi") -> None:
     """Background job: cast the story, read it in the chosen voices, store the MP3, record usage."""
     job = _jobs[post_id]
 
@@ -112,7 +112,7 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
         with _turn:
             partial = _partials.get(digest)
             if partial is None:
-                windows, _cast = plan_story(post_id, title, content)
+                windows, _cast = plan_story(post_id, title, content, language)
                 voices = ",".join(dict.fromkeys(v for w in windows for v in w.voices))[:60]
                 partial = _partials[digest] = Partial(windows, voices, spoken_chars(windows))
                 while len(_partials) > MAX_PARTIALS:
@@ -120,8 +120,9 @@ def _run(post_id: int, digest: str, title: str, content: str) -> None:
             job.total = len(partial.windows)
             chars, voices = partial.chars, partial.voices
             timings: dict = {}
+            style, dialogue_style = styles_for(language)
             audio = synthesize(
-                partial.windows, STYLE, DIALOGUE_STYLE, progress, partial.audio,
+                partial.windows, style, dialogue_style, progress, partial.audio,
                 title_words=len(title.split()), timings_out=timings,
             )
             timings_json = timing.dumps(timings) if timings.get("w") else None
@@ -181,7 +182,7 @@ def _server_reads(post: Post) -> bool:
 
 def _current_row(db: Session, post: Post, content: str) -> Tuple[Optional[StoryAudio], str]:
     """(the stored narration if it still matches the story's text, the story's fingerprint)."""
-    digest = fingerprint(post.title or "", content)
+    digest = fingerprint(post.title or "", content, post.language or "hi")
     row = db.query(StoryAudio).filter(StoryAudio.post_id == post.id).first()
     return (row if row and row.content_hash == digest else None), digest
 
@@ -248,7 +249,9 @@ def get_story_audio(
             raise HTTPException(status_code=503, detail="इस महीने की सर्वर-आवाज़ की सीमा पूरी हो चुकी है")
         job = Job(digest, 0)
         _jobs[post_id] = job
-        threading.Thread(target=_run, args=(post_id, digest, post.title or "", content), daemon=True).start()
+        threading.Thread(
+            target=_run, args=(post_id, digest, post.title or "", content, post.language or "hi"), daemon=True
+        ).start()
         return JSONResponse(_working(job), status_code=202)
 
 

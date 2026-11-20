@@ -10,9 +10,10 @@ Pacing, pauses inside a request and feeling are the speech model's job (see the 
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import Callable, List
+from typing import Callable, List, Optional, Tuple
 
 from app.core.config import settings
+from app.core.languages import BY_CODE
 
 # Bumped whenever the preparation or the style instructions change, so cached audio is remade.
 NARRATION_VERSION = "g4"
@@ -36,7 +37,23 @@ _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿️‍]")
 _HAS_WORDS = re.compile(r"[ऄ-ॣ०-ॿ\w]")
 _QUOTE = re.compile(r"“([^”]*)”|\"([^\"\n]*)\"")
 _STRAY_QUOTES = re.compile(r"[“”\"]")
-_SENTENCE_END = re.compile(r"(?<=[।॥?!])\s+|(?<=\.)\s+")
+# Where a sentence ends: the danda, the Arabic question mark and full stop (Urdu, Kashmiri, Sindhi),
+# the Ol Chiki and Meetei Mayek full stops, and the Latin marks.
+_SENTENCE_END = re.compile(r"(?<=[।॥?!؟۔᱾꯫])\s+|(?<=\.)\s+")
+
+
+def styles_for(language: Optional[str]) -> Tuple[str, str]:
+    """(narration style, dialogue style) for a story's language.
+
+    The instructions name the language so the model reads it in its own natural voice and not
+    as Hindi. Hindi keeps the texts above exactly (they are part of the cache key of every
+    narration already made); the others are the same words with the language's name.
+    """
+    language_info = BY_CODE.get(language or "")
+    if language_info is None or language_info.code == "hi":
+        return STYLE, DIALOGUE_STYLE
+    name = language_info.english
+    return STYLE.replace("Hindi", name), DIALOGUE_STYLE.replace("Hindi", name)
 
 # Silence (seconds) left before a request that begins a new paragraph, and before one that
 # continues the same paragraph (a line of dialogue after "उसने कहा").
@@ -102,9 +119,10 @@ def scan(content: str) -> List[List[Span]]:
     return paragraphs
 
 
-def tagged_text(title: str, paragraphs: List[List[Span]]) -> str:
+def tagged_text(title: str, paragraphs: List[List[Span]], language: Optional[str] = "hi") -> str:
     """The story with every quote numbered ``[Q1]“...”``, for the model that labels speakers."""
-    lines = [f"शीर्षक: {title}"] if title else []
+    label = "शीर्षक" if language in (None, "", "hi") else "Title"
+    lines = [f"{label}: {title}"] if title else []
     for spans in paragraphs:
         lines.append(" ".join(f"[Q{s.q}]“{s.text}”" if s.kind == "quote" else s.text for s in spans))
     return "\n".join(lines)
@@ -207,11 +225,16 @@ _STORED_FEMALE_VOICES = "hi-in-storyteller-2,hi-in-storyteller-6,hi-in-podcaster
 _STORED_MALE_VOICES = "hi-in-storyteller-1,hi-in-storyteller-5,hi-in-podcaster-8,hi-in-assistant-1"
 
 
-def fingerprint(title: str, content: str) -> str:
-    """Identifies this exact audio: the story's text, the reading style, and the narration version."""
+def fingerprint(title: str, content: str, language: Optional[str] = "hi") -> str:
+    """Identifies this exact audio: the story's text, the reading style, and the narration version.
+
+    For Hindi this is what it always was; another language adds its own style texts (they name the
+    language), so a story's audio is remade if its language is changed.
+    """
+    style, dialogue_style = styles_for(language)
     parts = [
         NARRATION_VERSION, _STORED_TTS_MODELS, _STORED_CAST_MODELS, _STORED_FEMALE_VOICES, _STORED_MALE_VOICES,
-        STYLE, DIALOGUE_STYLE, title or "", content or "",
+        style, dialogue_style, title or "", content or "",
     ]
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 

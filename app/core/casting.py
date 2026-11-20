@@ -15,11 +15,13 @@ import hashlib
 import logging
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from app.core.config import settings
+from app.core.languages import BY_CODE
 from app.core.narration import Span, Window, build_turns, build_windows, scan, tagged_text
 from app.core.speech import SpeechUnavailable, generate_json
+from app.core.voices import pools_for
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,37 @@ Answer with JSON only:
 Do not rewrite or repeat the story.
 
 """
+
+# The same questions for any other language. Hindi's cues above are Hindi verb endings; here the
+# model is told to use whatever the language itself marks (many Indian languages mark gender on the
+# verb, some, like Bengali and Malayalam, do not, and then names and forms of address decide).
+OTHER_PROMPT = """You are helping a text-to-speech narrator read a {language} story aloud with the right voices.
+The story is below. Every piece of quoted speech is tagged [Q1], [Q2], ... in reading order.
+
+Answer with JSON only:
+- narrator_gender: "female" if the story is told from a woman's or girl's point of view, "male"
+  if from a man's or boy's, otherwise "unknown". For a first-person story judge by the narrator's
+  own verb and adjective forms where {language} marks gender, by what other characters call the
+  narrator, and by the narrator's own role in the story. For a third-person story use the main
+  character whose thoughts and feelings we follow. Use "unknown" if it is really not clear.
+- speakers: every distinct character who speaks in quotes: id ("S1", "S2", ...), name as written in
+  the story (in its own script), gender ("female", "male" or "unknown"). Do not list the narrator here.
+- quotes: for every tag number, who says it: a speaker id, or "narrator" when the first-person
+  narrator says it. Use speech verbs and their gender where the language has them, names, forms of
+  address, who is being spoken to, and the back-and-forth of a conversation.
+
+Do not rewrite or repeat the story.
+
+"""
+
+
+def prompt_for(language: Optional[str]) -> str:
+    """The casting question for a story's language (Hindi's own text, unchanged, for Hindi)."""
+    info = BY_CODE.get(language or "")
+    if info is None or info.code == "hi":
+        return PROMPT
+    return OTHER_PROMPT.format(language=info.english)
+
 
 _GENDER = {"type": "STRING", "enum": ["female", "male", "unknown"]}
 SCHEMA = {
@@ -105,32 +138,33 @@ def _clean(data: dict, quote_count: int) -> Cast:
     return cast
 
 
-def analyze(title: str, paragraphs: List[List[Span]]) -> Cast:
+def analyze(title: str, paragraphs: List[List[Span]], language: Optional[str] = "hi") -> Cast:
     """Read the story's cast. If the model cannot be reached the story is simply read by one voice."""
     quote_count = sum(1 for spans in paragraphs for s in spans if s.kind == "quote")
     try:
-        data = generate_json(PROMPT + tagged_text(title, paragraphs), SCHEMA)
+        data = generate_json(prompt_for(language) + tagged_text(title, paragraphs, language), SCHEMA)
     except SpeechUnavailable as exc:
         logger.warning("could not read the story's cast (%s); using one voice", exc)
         return Cast()
     return _clean(data, quote_count)
 
 
-def _pools() -> Dict[str, List[str]]:
+def _pools(language: Optional[str] = "hi") -> Dict[str, List[str]]:
     def split(value: str) -> List[str]:
         return [v.strip() for v in (value or "").split(",") if v.strip()]
 
-    pools = {"female": split(settings.TTS_FEMALE_VOICES), "male": split(settings.TTS_MALE_VOICES)}
+    # Hindi's voices are the owner's settings; every other language has its own pools (see voices.py).
+    pools = pools_for(language) or {"female": split(settings.TTS_FEMALE_VOICES), "male": split(settings.TTS_MALE_VOICES)}
     for gender in GENDERS:
         if not pools[gender]:
             pools[gender] = pools["male" if gender == "female" else "female"] or FALLBACK_VOICES[gender]
     return pools
 
 
-def assign_voices(cast: Cast, seed: int) -> Tuple[str, Callable[[int], str]]:
+def assign_voices(cast: Cast, seed: int, language: Optional[str] = "hi") -> Tuple[str, Callable[[int], str]]:
     """(narrator's voice, function giving the voice of quote number q)."""
     rng = random.Random(seed)
-    pools = _pools()
+    pools = _pools(language)
     used: List[str] = []
 
     def pick(gender: str) -> str:
@@ -163,10 +197,10 @@ def seed_for(post_id: int) -> int:
     return int(hashlib.sha256(f"lekhani-voice-{post_id}".encode()).hexdigest()[:8], 16)
 
 
-def plan_story(post_id: int, title: str, content: str) -> Tuple[List[Window], Cast]:
+def plan_story(post_id: int, title: str, content: str, language: Optional[str] = "hi") -> Tuple[List[Window], Cast]:
     """The requests that read this story (each at most two voices), and the cast behind them."""
     paragraphs = scan(content)
-    cast = analyze(title, paragraphs)
-    narrator_voice, voice_for_quote = assign_voices(cast, seed_for(post_id))
+    cast = analyze(title, paragraphs, language)
+    narrator_voice, voice_for_quote = assign_voices(cast, seed_for(post_id), language)
     turns = build_turns(title, paragraphs, narrator_voice, voice_for_quote)
     return build_windows(turns), cast

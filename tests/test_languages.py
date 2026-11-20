@@ -273,16 +273,19 @@ def test_the_feed_reader_can_pick_languages_and_each_item_names_its_language(tes
 
 # ---------------------------------------------------------------- narration is only for the languages set up for it
 
-def test_the_server_voice_reads_hindi_only_until_another_language_is_turned_on(test_client, writer_b):
+def test_the_server_voice_reads_the_languages_google_lists_and_leaves_the_rest_to_the_device(test_client, writer_b):
     hi = _story(test_client, writer_b, "आवाज़ हिंदी").json()
     ta = _story(test_client, writer_b, "குரல் தமிழ்", language="ta", content=SAMPLES["ta"] * 6).json()
+    sa = _story(test_client, writer_b, "ध्वनिः संस्कृतम्", language="sa", content=SAMPLES["sa"] * 6).json()
     with patch("app.api.endpoints.audio.is_available", return_value=True):
         assert test_client.get("/api/audio/status", params={"post_id": hi["id"]}).json()["enabled"] is True
-        assert test_client.get("/api/audio/status", params={"post_id": ta["id"]}).json()["enabled"] is False
-        with patch("app.api.endpoints.audio.settings.TTS_LANGUAGES", "hi,ta"):
-            assert test_client.get("/api/audio/status", params={"post_id": ta["id"]}).json()["enabled"] is True
+        assert test_client.get("/api/audio/status", params={"post_id": ta["id"]}).json()["enabled"] is True
+        # Google lists no Sanskrit voice: the listener's own device reads it
+        assert test_client.get("/api/audio/status", params={"post_id": sa["id"]}).json()["enabled"] is False
+        with patch("app.api.endpoints.audio.settings.TTS_LANGUAGES", "hi"):  # an owner who turns the rest off
+            assert test_client.get("/api/audio/status", params={"post_id": ta["id"]}).json()["enabled"] is False
         # asking for it anyway never starts a job for a language that is off
-        assert test_client.get(f"/api/audio/post/{ta['id']}").status_code == 503
+        assert test_client.get(f"/api/audio/post/{sa['id']}").status_code == 503
 
 
 # ---------------------------------------------------------------- the language a person prefers

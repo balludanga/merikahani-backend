@@ -38,8 +38,8 @@ MP3_DELAY = 0.046
 # A Gemini narration begins and ends with a little silence (typically 0.3 s and 0.6 s).
 ESTIMATE_LEAD = 0.3
 ESTIMATE_TRAIL = 0.6
-_SENTENCE_END = re.compile(r"[।॥?!][”\"’)]*$|\.[”\"’)]*$")
-_CLAUSE_END = re.compile(r"[,;:—–…][”\"’)]*$")
+_SENTENCE_END = re.compile(r"[।॥?!؟۔᱾꯫][”\"’)]*$|\.[”\"’)]*$")
+_CLAUSE_END = re.compile(r"[,;:—–…،؛][”\"’)]*$")
 _LETTERS = re.compile("[" + LETTER_RANGES + r"\w]")
 
 # (word, kind of pause after it)

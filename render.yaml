@@ -29,8 +29,9 @@ services:
       # dashboard, not here: this file is public. Empty means nobody can.
       - key: ADMIN_EMAILS
         sync: false
-      # Narration of stories in a natural Hindi voice (Google Gemini speech, free AI Studio key,
-      # no card). Without the key the listen button simply uses the reader's own browser voice.
+      # Narration of stories in a natural voice (Google Gemini speech, free AI Studio key, no card),
+      # in the languages Google lists (TTS_LANGUAGES). Without the key the listen button simply
+      # uses the reader's own browser voice.
       - key: GEMINI_API_KEY
         sync: false
       - key: UPLOAD_BUCKET
